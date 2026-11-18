@@ -1,0 +1,33 @@
+# Binaries
+guard
+bin/
+dist/
+
+# Go build & test artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Local state & sessions (runtime generated)
+.guard/
+*.mode
+*.role
+*.tmp
+
+# Antigravity CLI local runtime states (Git-ignored)
+.agents/chatlog-state.json
+.agents/current_mode
+
+# IDE & OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

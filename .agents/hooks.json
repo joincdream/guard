@@ -1,0 +1,10 @@
+{
+  "chatlog": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "chatlog hook"
+      }
+    ]
+  }
+}
