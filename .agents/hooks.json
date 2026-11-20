@@ -1,9 +1,24 @@
 {
-  "chatlog": {
+  "guard": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "guard hook",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ]
+  },
+  "obsidian-chatlog": {
+    "enabled": true,
     "Stop": [
       {
         "type": "command",
-        "command": "chatlog hook"
+        "command": "~/.local/bin/chatlog hook",
+        "timeout": 10
       }
     ]
   }

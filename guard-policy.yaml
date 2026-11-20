@@ -26,19 +26,23 @@ rules:
       - "src/docker/**"
     message: "[POLICY VIOLATION] 설계(PLAN) 모드에서는 소스 코드 및 인프라 파일(src/internal, src/cmd, src/web, src/docker)을 수정할 수 없습니다. 작업 계획서 및 문서 파일만 작성하십시오."
 
-  # 3. TEST 모드: 프로덕션 코드 열람 차단 (단위 테스트 파일은 예외 허용)
-  - name: "guard-production-code-read"
+  # 3. TEST 모드: doc/ 디렉토리 및 테스트 파일(*_test.go) 외 모든 파일 접근(읽기/쓰기) 차단
+  - name: "guard-test-mode-read"
     mode: "TEST"
     type: "read"
     patterns:
-      - "src/internal/**"
-      - "src/cmd/**"
+      - "**"
     exclude_patterns:
+      - "doc/**"
       - "*_test.go"
-      - "*.test.ts"
-      - "*.test.js"
-      - "*.spec.ts"
-      - "*.spec.js"
-      - "**/testutil/**"
-      - "**/contract/**"
-    message: "[POLICY VIOLATION] TEST 모드에서는 프로덕션 코드(src/internal/, src/cmd/)를 열람할 수 없습니다. 계약(src/contract/) 및 테스트 파일(*_test.go)만 허용됩니다."
+    message: "[POLICY VIOLATION] TEST 모드에서는 doc/ 디렉토리와 테스트 파일(*_test.go)만 열람할 수 있습니다. 다른 파일에는 접근할 수 없습니다."
+
+  - name: "guard-test-mode-write"
+    mode: "TEST"
+    type: "write"
+    patterns:
+      - "**"
+    exclude_patterns:
+      - "doc/**"
+      - "*_test.go"
+    message: "[POLICY VIOLATION] TEST 모드에서는 doc/ 디렉토리와 테스트 파일(*_test.go)만 수정할 수 있습니다. 다른 파일에는 접근할 수 없습니다."
