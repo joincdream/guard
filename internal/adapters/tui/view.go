@@ -18,6 +18,12 @@ func (m Model) View() string {
 	if m.showModal {
 		return renderModal(m)
 	}
+	if m.handoffMode == handoffViewRefViewer {
+		return renderHandoffRefViewer(m)
+	}
+	if m.handoffMode == handoffViewSummary && m.activeHandoff != nil {
+		return renderHandoffSummaryModal(m)
+	}
 
 	w := m.width
 	if w < 60 {
@@ -49,9 +55,14 @@ func (m Model) View() string {
 	}
 
 	sessionsPanel := renderSessionsPanel(m, w, sessionPanelHeight)
-	eventsPanel := renderEventsPanel(m, w, eventPanelHeight)
+	var bottomPanel string
+	if m.showHandoffQueue {
+		bottomPanel = renderHandoffQueuePanel(m, w, eventPanelHeight)
+	} else {
+		bottomPanel = renderEventsPanel(m, w, eventPanelHeight)
+	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, sessionsPanel, eventsPanel, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, header, sessionsPanel, bottomPanel, footer)
 }
 
 func renderHeader(m Model, width int) string {
@@ -226,6 +237,7 @@ func renderFooter(m Model) string {
 		footerKeyStyle.Render("[A]") + footerDescStyle.Render(" ALL │ ") +
 		footerKeyStyle.Render("[C]") + footerDescStyle.Render(i18n.T("tui.footer.reset")) +
 		footerKeyStyle.Render("[Space]") + footerDescStyle.Render(i18n.T("tui.footer.full_log")) +
+		footerKeyStyle.Render("[H]") + footerDescStyle.Render(i18n.T("tui.footer.handoff")) +
 		footerKeyStyle.Render("[r]") + footerDescStyle.Render(i18n.T("tui.footer.refresh")) +
 		footerKeyStyle.Render("[Q]") + footerDescStyle.Render(i18n.T("tui.footer.quit"))
 

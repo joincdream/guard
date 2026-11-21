@@ -28,6 +28,88 @@ var inlineScriptRunners = map[string]bool{
 	"zsh":     true,
 }
 
+const (
+	ruleHandoffSelfApproveBlock   = "handoff-self-approve-block"
+	reasonHandoffSelfApproveBlock = "Agent self-approval is blocked: 'guard handoff approve' must be executed by a human operator via 'guard top' or a direct terminal."
+)
+
+// evaluateProtectedGuardCommand detects attempts by an agent to invoke protected
+// human-gatekeeper commands (such as `guard handoff approve`), including via
+// shell chaining or inline script wrappers.
+func evaluateProtectedGuardCommand(cmdLine string) (string, string) {
+	return evaluateProtectedGuardCommandDepth(cmdLine, 0)
+}
+
+func evaluateProtectedGuardCommandDepth(cmdLine string, depth int) (string, string) {
+	if depth > 3 {
+		return "", ""
+	}
+	segments := splitCommandSegments(cmdLine)
+	for _, seg := range segments {
+		trimmed := strings.TrimSpace(seg)
+		if trimmed == "" {
+			continue
+		}
+		tokens := tokenizeSegment(trimmed)
+		cmdIdx := findCommandIndex(tokens)
+		if cmdIdx < 0 {
+			continue
+		}
+		baseCmd := strings.ToLower(path.Base(tokens[cmdIdx]))
+		args := tokens[cmdIdx+1:]
+
+		if baseCmd == "guard" || baseCmd == "guard.exe" {
+			posArgs := extractPathArgs(args)
+			if len(posArgs) >= 2 &&
+				strings.EqualFold(posArgs[0], "handoff") &&
+				strings.EqualFold(posArgs[1], "approve") {
+				return ruleHandoffSelfApproveBlock, reasonHandoffSelfApproveBlock
+			}
+		}
+
+		if inlineScriptRunners[baseCmd] {
+			for i := 0; i < len(args); i++ {
+				if (args[i] == "-c" || args[i] == "-e" || args[i] == "-lc") && i+1 < len(args) {
+					script := args[i+1]
+					if baseCmd == "bash" || baseCmd == "sh" || baseCmd == "zsh" {
+						if ruleName, reason := evaluateProtectedGuardCommandDepth(script, depth+1); reason != "" {
+							return ruleName, reason
+						}
+					}
+					if containsGuardHandoffApprove(script) {
+						return ruleHandoffSelfApproveBlock, reasonHandoffSelfApproveBlock
+					}
+					i++
+				}
+			}
+		}
+	}
+	return "", ""
+}
+
+func containsGuardHandoffApprove(script string) bool {
+	candidates := extractScriptCandidates(script)
+	stage := 0
+	for _, c := range candidates {
+		tok := strings.ToLower(path.Base(strings.TrimSpace(c)))
+		switch stage {
+		case 0:
+			if tok == "guard" || tok == "guard.exe" {
+				stage = 1
+			}
+		case 1:
+			if tok == "handoff" {
+				stage = 2
+			}
+		case 2:
+			if tok == "approve" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // evaluateCommandRules parses a shell command line into segments and inspects each segment
 // for read/write policy violations and shell bypass attempts.
 func evaluateCommandRules(policy *Policy, currentMode string, cmdLine string) (string, string) {

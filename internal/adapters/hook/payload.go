@@ -15,6 +15,7 @@ type Input struct {
 	} `json:"toolCall"`
 	ToolName    string                 `json:"tool_name"`
 	ToolArgs    map[string]interface{} `json:"tool_args"`
+	ToolInput   map[string]interface{} `json:"tool_input"`
 	Path        string                 `json:"Path"`
 	PathLower   string                 `json:"path"`
 	CommandLine string                 `json:"CommandLine"`
@@ -47,10 +48,13 @@ func (in *Input) ExtractToolName() string {
 
 // ExtractTargetPath returns the file path argument from supported payload shapes.
 func (in *Input) ExtractTargetPath() string {
-	if p := stringArg(in.ToolCall.Args, "Path", "path"); p != "" {
+	if p := stringArg(in.ToolCall.Args, "Path", "path", "file_path"); p != "" {
 		return p
 	}
-	if p := stringArg(in.ToolArgs, "Path", "path"); p != "" {
+	if p := stringArg(in.ToolArgs, "Path", "path", "file_path"); p != "" {
+		return p
+	}
+	if p := stringArg(in.ToolInput, "Path", "path", "file_path"); p != "" {
 		return p
 	}
 	if strings.TrimSpace(in.Path) != "" {
@@ -61,10 +65,13 @@ func (in *Input) ExtractTargetPath() string {
 
 // ExtractCommandLine returns the shell command line argument from supported payload shapes.
 func (in *Input) ExtractCommandLine() string {
-	if c := stringArg(in.ToolCall.Args, "CommandLine", "command_line", "command"); c != "" {
+	if c := stringArg(in.ToolCall.Args, "CommandLine", "command_line", "command", "cmd"); c != "" {
 		return c
 	}
-	if c := stringArg(in.ToolArgs, "CommandLine", "command_line", "command"); c != "" {
+	if c := stringArg(in.ToolArgs, "CommandLine", "command_line", "command", "cmd"); c != "" {
+		return c
+	}
+	if c := stringArg(in.ToolInput, "CommandLine", "command_line", "command", "cmd"); c != "" {
 		return c
 	}
 	if strings.TrimSpace(in.CommandLine) != "" {

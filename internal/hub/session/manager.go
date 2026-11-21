@@ -16,6 +16,9 @@ import (
 	"guard/internal/core"
 )
 
+// ErrNoActiveSession is returned when no live session matches the requested mode and workspace.
+var ErrNoActiveSession = errors.New("no active session found")
+
 // Manager manages session JSON files in a dedicated directory with atomic writes and GC.
 type Manager struct {
 	dir     string
@@ -321,6 +324,73 @@ func (m *Manager) AppendEvent(id string, ev Event) (*Session, error) {
 		return nil
 	})
 	return updated, err
+}
+
+// UpdateScope atomically updates AllowedWritePaths for an existing session under an exclusive file lock.
+func (m *Manager) UpdateScope(id string, paths []string) (*Session, error) {
+	cleaned := make([]string, 0, len(paths))
+	for _, p := range paths {
+		trimmed := strings.TrimSpace(p)
+		if trimmed == "" {
+			return nil, errors.New("scope path must not be empty")
+		}
+		cleaned = append(cleaned, trimmed)
+	}
+
+	var updated *Session
+	err := m.withSessionLock(id, func() error {
+		sess, err := m.Get(id)
+		if err != nil {
+			return err
+		}
+		if len(cleaned) == 0 {
+			sess.AllowedWritePaths = nil
+		} else {
+			sess.AllowedWritePaths = cleaned
+		}
+		sess.UpdatedAt = time.Now()
+		if err := m.Save(sess); err != nil {
+			return err
+		}
+		updated = sess
+		return nil
+	})
+	return updated, err
+}
+
+// FindActiveByMode returns the most recently updated live session matching mode and workspace.
+// If workspace is non-empty, only sessions matching that cleaned workspace path are considered.
+// Returns ErrNoActiveSession if no matching live session exists.
+func (m *Manager) FindActiveByMode(mode string, workspace string) (*Session, error) {
+	normMode := core.NormalizeMode(mode)
+	if normMode == "" {
+		return nil, errors.New("mode is required")
+	}
+
+	normWorkspace := ""
+	if strings.TrimSpace(workspace) != "" {
+		normWorkspace = filepath.Clean(workspace)
+	}
+
+	sessions, err := m.List()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, sess := range sessions {
+		if !strings.EqualFold(sess.Mode, normMode) {
+			continue
+		}
+		if normWorkspace != "" && filepath.Clean(sess.Workspace) != normWorkspace {
+			continue
+		}
+		if sess.PID > 0 && m.isAlive != nil && !m.isAlive(sess.PID) {
+			continue
+		}
+		return sess, nil
+	}
+
+	return nil, fmt.Errorf("%w: mode=%s workspace=%s", ErrNoActiveSession, normMode, normWorkspace)
 }
 
 func normalizeMode(mode string) string {

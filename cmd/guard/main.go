@@ -12,6 +12,7 @@ import (
 	"guard/internal/adapters/launcher"
 	"guard/internal/adapters/tui"
 	"guard/internal/core"
+	"guard/internal/hub/handoff"
 	"guard/internal/hub/policy"
 	"guard/internal/hub/session"
 	"guard/internal/i18n"
@@ -19,6 +20,7 @@ import (
 
 type cliApp struct {
 	sessMgr       *session.Manager
+	handoffMgr    *handoff.Manager
 	workspaceRoot string
 	stdin         io.Reader
 	stdout        io.Writer
@@ -53,6 +55,9 @@ func (a *cliApp) run(args []string) int {
 	switch cmd {
 	case "hook":
 		return a.runHook()
+
+	case "handoff":
+		return a.runHandoff(args[1:])
 
 	case "dev", "test", "plan", "all":
 		mode := core.NormalizeMode(cmd)
@@ -92,7 +97,12 @@ func (a *cliApp) run(args []string) int {
 		return 0
 
 	case "top", "ui":
-		if err := tui.Start(a.sessMgr); err != nil {
+		hMgr, err := a.ensureHandoffManager()
+		if err != nil {
+			fmt.Fprintf(a.stderr, "error: initialize handoff manager: %v\n", err)
+			return 1
+		}
+		if err := tui.StartWithHandoff(a.sessMgr, hMgr, a.workspaceRoot); err != nil {
 			fmt.Fprint(a.stderr, i18n.T("cli.tui.failed", err))
 			return 1
 		}

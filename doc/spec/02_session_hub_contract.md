@@ -19,15 +19,18 @@ type Event struct {
     Reason    string    `json:"reason,omitempty"`
 }
 
+var ErrNoActiveSession = errors.New("no active session found")
+
 type Session struct {
-    ID             string    `json:"id"`
-    Mode           string    `json:"mode"` // DEV, TEST, PLAN, ALL
-    PID            int       `json:"pid"`
-    Workspace      string    `json:"workspace"`
-    CreatedAt      time.Time `json:"createdAt"`
-    UpdatedAt      time.Time `json:"updatedAt"`
-    ViolationCount int       `json:"violationCount"`
-    Events         []Event   `json:"events"`
+    ID                string    `json:"id"`
+    Mode              string    `json:"mode"` // DEV, TEST, PLAN, ALL
+    PID               int       `json:"pid"`
+    Workspace         string    `json:"workspace"`
+    AllowedWritePaths []string  `json:"allowedWritePaths,omitempty"`
+    CreatedAt         time.Time `json:"createdAt"`
+    UpdatedAt         time.Time `json:"updatedAt"`
+    ViolationCount    int       `json:"violationCount"`
+    Events            []Event   `json:"events"`
 }
 ```
 
@@ -50,6 +53,8 @@ type Session struct {
 | `(m *Manager) Delete(id string) error` | 세션 JSON 및 연관 `.lock` 파일 삭제. 이미 없는 파일은 에러 없이 `nil` 반환 |
 | `(m *Manager) DeleteAll() (int, error)` | 모든 `.json` 세션 파일과 `.lock` 파일 삭제. 삭제된 `.json` 건수만 반환 |
 | `(m *Manager) UpdateMode(id, mode string) (*Session, error)` | **파일 락(`syscall.Flock`) 보호** 하에 모드 정규화·갱신 및 `UpdatedAt` 갱신 |
+| `(m *Manager) UpdateScope(id string, paths []string) (*Session, error)` | **파일 락 보호** 하에 `AllowedWritePaths` 갱신 (빈 경로 요소 포함 시 에러, 빈 슬라이스 전달 시 `nil`로 해제) |
+| `(m *Manager) FindActiveByMode(mode, workspace string) (*Session, error)` | 모드·워크스페이스(`filepath.Clean`)가 일치하고 PID가 생존 중인 가장 최근 세션 반환. 미발견 시 `ErrNoActiveSession` 반환 |
 | `(m *Manager) ResetViolations(id string) (*Session, error)` | **파일 락 보호** 하에 `ViolationCount = 0` 초기화 및 `UpdatedAt` 갱신 |
 | `(m *Manager) AppendEvent(id string, ev Event) (*Session, error)` | **파일 락 보호** 하에 이벤트 추가, `MaxEvents(50)` 초과 시 오래된 순으로 로테이션, `decision == "deny"`이면 `ViolationCount++`, `UpdatedAt` 갱신 |
 | `(m *Manager) CleanAndList() ([]*Session, []string, error)` | 디렉토리 1회 스캔으로 **`PID <= 0` 또는 사망 PID 세션을 즉시 삭제**하고, `(생존 세션 목록, 삭제된 ID 목록, err)` 반환 |

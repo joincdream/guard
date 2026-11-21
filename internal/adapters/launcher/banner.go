@@ -12,17 +12,21 @@ import (
 
 // BannerInfo holds runtime context displayed in the launcher briefing banner.
 type BannerInfo struct {
-	Mode           string
-	SessionID      string
-	Workspace      string
-	PolicySource   string
-	PolicyWarnings []string
-	CmdName        string
-	SkillPath      string
-	SkillCreated   bool
-	HookPath       string
-	HookUpdated    bool
-	HasHook        bool
+	Mode              string
+	SessionID         string
+	Workspace         string
+	PolicySource      string
+	PolicyWarnings    []string
+	CmdName           string
+	SkillPath         string
+	SkillCreated      bool
+	HookPath          string
+	HookUpdated       bool
+	HasHook           bool
+	RulePath          string
+	RuleCreated       bool
+	DeliveredHandoffs int
+	InboxPath         string
 }
 
 // PrintBanner renders a concise visual briefing banner and quick usage hints before launching the child process.
@@ -71,6 +75,12 @@ func PrintBanner(w io.Writer, info BannerInfo) {
 	}
 	if info.HookUpdated && info.HookPath != "" {
 		fmt.Fprint(w, i18n.T("launcher.banner.hook_updated", info.HookPath))
+	}
+	if info.RuleCreated && info.RulePath != "" {
+		fmt.Fprintf(w, "📜 [Workflow Rule] Created: %s\n", info.RulePath)
+	}
+	if info.DeliveredHandoffs > 0 && info.InboxPath != "" {
+		fmt.Fprintf(w, "📬 [Handoff] Delivered %d buffered ticket(s) -> %s\n", info.DeliveredHandoffs, info.InboxPath)
 	}
 	if filepath.Base(info.CmdName) == "agy" && !info.HasHook {
 		fmt.Fprint(w, i18n.T("launcher.banner.no_hook_warn"))

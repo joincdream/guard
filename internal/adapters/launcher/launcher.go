@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"guard/internal/core"
+	"guard/internal/hub/handoff"
 	"guard/internal/hub/policy"
 	"guard/internal/hub/session"
 	"guard/internal/i18n"
@@ -23,6 +24,7 @@ import (
 // Launcher spawns an agent command under an isolated guardrail session and manages its lifecycle.
 type Launcher struct {
 	sessionMgr *session.Manager
+	handoffMgr *handoff.Manager
 	stdout     io.Writer
 	stderr     io.Writer
 }
@@ -43,6 +45,12 @@ func New(sessionMgr *session.Manager, stdout, stderr io.Writer) *Launcher {
 		stdout:     stdout,
 		stderr:     stderr,
 	}
+}
+
+// WithHandoffManager injects a custom handoff.Manager (useful for tests or custom paths).
+func (l *Launcher) WithHandoffManager(m *handoff.Manager) *Launcher {
+	l.handoffMgr = m
+	return l
 }
 
 // Run performs stale session GC, prints the briefing banner, binds a new session to the spawned
@@ -73,26 +81,78 @@ func (l *Launcher) Run(mode string, workspace string, cmdArgs []string) int {
 
 	var hookPath string
 	var hookUpdated bool
+	var rulePath string
+	var ruleCreated bool
 	if filepath.Base(cmdArgs[0]) == "agy" {
 		var hookErr error
 		hookPath, hookUpdated, hookErr = EnsureWorkspaceHook(workspace)
 		if hookErr != nil {
 			fmt.Fprintf(l.stderr, "⚠️  [Bootstrap] Hook registration warning: %v\n", hookErr)
 		}
+		var ruleErr error
+		rulePath, ruleCreated, ruleErr = EnsureWorkflowRule(workspace)
+		if ruleErr != nil {
+			fmt.Fprintf(l.stderr, "⚠️  [Bootstrap] Workflow rule registration warning: %v\n", ruleErr)
+		}
+	}
+
+	// Claim any buffered approved handoffs targeting this mode and bind conditional Scope Lock.
+	var (
+		inboxPath         string
+		deliveredHandoffs int
+		initialScopePaths []string
+	)
+	hMgr := l.handoffMgr
+	if hMgr == nil {
+		var hErr error
+		hMgr, hErr = handoff.NewManager("", l.sessionMgr.Dir())
+		if hErr != nil {
+			fmt.Fprintf(l.stderr, "⚠️  [Handoff] Manager init warning: %v\n", hErr)
+		}
+	}
+	if hMgr != nil {
+		var pathErr error
+		inboxPath, pathErr = hMgr.InboxPath(sessionID)
+		if pathErr != nil {
+			fmt.Fprintf(l.stderr, "⚠️  [Handoff] Inbox path warning: %v\n", pathErr)
+		}
+
+		claimed, claimErr := hMgr.ConsumePendingForMode(normalizedMode, sessionID)
+		if claimErr != nil {
+			fmt.Fprintf(l.stderr, "⚠️  [Handoff] Offline queue delivery warning: %v\n", claimErr)
+		} else if len(claimed) > 0 {
+			deliveredHandoffs = len(claimed)
+			seen := make(map[string]bool)
+			for _, it := range claimed {
+				if !handoff.ShouldApplyScopeLock(it, normalizedMode) {
+					continue
+				}
+				for _, target := range it.Targets {
+					if !seen[target] {
+						seen[target] = true
+						initialScopePaths = append(initialScopePaths, target)
+					}
+				}
+			}
+		}
 	}
 
 	PrintBanner(l.stdout, BannerInfo{
-		Mode:           normalizedMode,
-		SessionID:      sessionID,
-		Workspace:      workspace,
-		PolicySource:   polRes.Source,
-		PolicyWarnings: polRes.Warnings,
-		CmdName:        cmdArgs[0],
-		SkillPath:      skillPath,
-		SkillCreated:   skillCreated,
-		HookPath:       hookPath,
-		HookUpdated:    hookUpdated,
-		HasHook:        HasWorkspaceHook(workspace),
+		Mode:              normalizedMode,
+		SessionID:         sessionID,
+		Workspace:         workspace,
+		PolicySource:      polRes.Source,
+		PolicyWarnings:    polRes.Warnings,
+		CmdName:           cmdArgs[0],
+		SkillPath:         skillPath,
+		SkillCreated:      skillCreated,
+		HookPath:          hookPath,
+		HookUpdated:       hookUpdated,
+		HasHook:           HasWorkspaceHook(workspace),
+		RulePath:          rulePath,
+		RuleCreated:       ruleCreated,
+		DeliveredHandoffs: deliveredHandoffs,
+		InboxPath:         inboxPath,
 	})
 
 	// Set terminal tab/window title to reflect the active guard mode
@@ -102,10 +162,14 @@ func (l *Launcher) Run(mode string, workspace string, cmdArgs []string) int {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = l.stdout
 	cmd.Stderr = l.stderr
-	cmd.Env = mergeEnv(os.Environ(), map[string]string{
+	envOverrides := map[string]string{
 		"AGENT_MODE":       normalizedMode,
 		"GUARD_SESSION_ID": sessionID,
-	})
+	}
+	if inboxPath != "" {
+		envOverrides["GUARD_INBOX_PATH"] = inboxPath
+	}
+	cmd.Env = mergeEnv(os.Environ(), envOverrides)
 
 	if err := cmd.Start(); err != nil {
 		fmt.Fprint(l.stderr, i18n.T("launcher.err.start_failed", cmdArgs[0], err))
@@ -114,15 +178,21 @@ func (l *Launcher) Run(mode string, workspace string, cmdArgs []string) int {
 
 	// Bind session file to the actual child process PID
 	if err := l.sessionMgr.Create(&session.Session{
-		ID:        sessionID,
-		Mode:      normalizedMode,
-		PID:       cmd.Process.Pid,
-		Workspace: workspace,
+		ID:                sessionID,
+		Mode:              normalizedMode,
+		PID:               cmd.Process.Pid,
+		Workspace:         workspace,
+		AllowedWritePaths: initialScopePaths,
 	}); err != nil {
 		fmt.Fprintf(l.stderr, "⚠️  [Session] Failed to persist session %s: %v\n", session.ShortID(sessionID), err)
 	}
 	defer func() {
 		_ = l.sessionMgr.Delete(sessionID)
+		if inboxPath != "" {
+			if rmErr := os.Remove(inboxPath); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+				fmt.Fprintf(l.stderr, "⚠️  [Handoff] Failed to clean inbox %s: %v\n", inboxPath, rmErr)
+			}
+		}
 	}()
 
 	// Forward termination signals to the child process so defer cleanup runs cleanly.

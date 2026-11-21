@@ -68,6 +68,17 @@ func Evaluate(mode string, policy *Policy, toolName string, targetPath string, c
 // EvaluateRequest checks a tool invocation request against the given policy.
 // It is a pure domain function with no filesystem or UI dependencies.
 func EvaluateRequest(policy *Policy, req EvalRequest) Decision {
+	// Trust boundary check: block agent self-approval commands regardless of mode or policy.
+	if strings.TrimSpace(req.CommandLine) != "" {
+		if ruleName, reason := evaluateProtectedGuardCommand(req.CommandLine); reason != "" {
+			return Decision{
+				Allowed:  false,
+				RuleName: ruleName,
+				Reason:   reason,
+			}
+		}
+	}
+
 	normalizedMode := NormalizeMode(req.Mode)
 
 	// Mode ALL or QA bypasses all checks.

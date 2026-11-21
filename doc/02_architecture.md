@@ -191,6 +191,7 @@ guard/
 │   ├── 01_requirements.md              # 기능 및 비기능 요구사항 명세서 (PRD)
 │   ├── 02_architecture.md              # 시스템 아키텍처 및 상세 설계서 (본 문서)
 │   ├── 03_tui_control_tower.md         # TUI 관제탑 전용 상세 설계서
+│   ├── 08_handoff_protocol.md          # 범용 핸드오프 프로토콜 상세 설계서
 │   └── guard-analysis-and-improvements.md
 │
 ├── chat/                               # 실시간 대화 기록 (chatlog)
@@ -208,27 +209,15 @@ guard/
 
 다중 에이전트(`DEV`, `TEST`, `PLAN`)를 병행 운용할 때 발생하는 두 가지 핵심 운영 병목(**모드 간 수동 정보 전달**, **수정 범위 이탈 방지 및 Audit 반복 프롬프팅**)을 기존 3계층 아키텍처 위에서 시스템 레벨로 자동화합니다.
 
-### 6.1 기능 1: 모드·세션 간 핸드오프 자동화 (`guard handoff`)
+### 6.1 기능 1: 범용 핸드오프 프로토콜 (`guard handoff`)
 
-#### 목적
-- `QA(TEST)`가 작성한 결함 보고서를 `DEV` 터미널에 일일이 타이핑해 전달하거나, `DEV` 수정 완료 후 `QA`에 재검증을 수동 요청하는 마찰을 제거합니다.
+> 📄 **상세 설계 문서**: [08_handoff_protocol.md](./08_handoff_protocol.md)
 
-#### 아키텍처 및 데이터 흐름
-```mermaid
-flowchart LR
-    QA["QA 세션 (TEST 모드)"] -->|"guard handoff send --to dev doc/test/report.md"| Hub["Handoff Hub\n(internal/hub/handoff)"]
-    Hub --> Store[(".agents/handoff/queue.json\n또는 ~/.guard/handoff/")]
-    Store -->|"guard top 미확인 배지 표시"| TUI["TUI Control Tower"]
-    Store -->|"guard handoff inbox / Hook 알림"| DEV["DEV 세션 (DEV 모드)"]
-```
+다중 에이전트(`PLAN`, `DEV`, `TEST`) 및 외부 액션(CI/CD·PR) 간에 작업 맥락과 산출물을 전달할 때 발생하는 수동 복사·프롬프팅 마찰을 제거하기 위한 **범용 비동기 핸드오프 프로토콜**입니다.
 
-#### 핵심 컴포넌트 설계
-- **데이터 모델 (`HandoffItem`)**: `ID`, `FromMode`, `ToMode`(또는 `ToSessionID`), `FilePath`, `Summary`, `Status`(`pending` / `acked`), `CreatedAt`.
-- **CLI 인터페이스**:
-  - `guard handoff send --to <dev|test|plan|sessionId> <file> [-m "요약"]`: 대상 모드/세션 인박스에 산출물 경로와 요약 등록
-  - `guard handoff inbox`: 현재 세션/모드 앞으로 도착한 미확인 핸드오프 목록 조회
-  - `guard handoff ack <id>`: 처리 완료 표시
-- **TUI 연동**: `guard top` 활성 세션 목록 또는 헤더에 미확인 핸드오프 건수 배지 표시 및 단축키 조회 지원.
+- **설계 원칙**: 무거운 DAG 파이프라인 엔진을 구축하지 않고, 임의의 노드 간에 표준 티켓(`HandoffItem`)을 교환하는 경량 프리미티브로 동작합니다.
+- **Human-in-the-loop Gatekeeper**: 발신 세션이 `guard handoff send`로 티켓을 발행하면 `guard top`(TUI 관제탑)에 3줄 요약 모달이 팝업되며, 조율자(사람)가 `[Enter]` 1키 승인 시 수신 세션 인박스(`~/.guard/sessions/<id>.inbox`)에 표준 Markdown Envelope을 적재하거나 외부 액션 훅을 실행합니다.
+- **Scope Lock과의 조건부 결합**: `fix`·`task` 등 실제 코드 수정이 필요한 핸드오프 승인 시에만 아래 6.2절의 물리적 `Scope Lock`을 자동 바인딩합니다.
 
 ---
 
@@ -254,45 +243,17 @@ flowchart LR
 
 ---
 
-### 6.3 End-to-End 워크플로우 시퀀스 (QA ↔ DEV 루프)
-
-```mermaid
-sequenceDiagram
-    participant QA as QA 세션 (TEST 모드)
-    participant Hub as Guard Hub (handoff / session)
-    participant Top as guard top (관제탑)
-    participant DEV as DEV 세션 (DEV 모드)
-
-    QA->>QA: 1. 테스트 실행 & 보고서 작성 (doc/test/report.md)
-    QA->>Hub: 2. guard handoff send --to dev <report> -m "결함 요약"
-    Hub-->>Top: 3. DEV 세션에 미확인 배지(📩 1) 실시간 표시
-    DEV->>Hub: 4. guard handoff inbox (사용자 트리거: "인박스 확인")
-    DEV->>DEV: 5. 보고서 분석 후 수정 계획 제시 → 사용자 승인
-    Top->>Hub: 6. 사용자가 Scope Lock 설정 (허용 파일 목록 잠금)
-    DEV->>Hub: 7. 코드 수정 (허용 외 파일 수정 시 [SCOPE VIOLATION] 차단)
-    DEV->>Hub: 8. guard audit (합의 목록 vs git status/diff 자동 대조)
-    DEV->>Hub: 9. guard handoff ack & send --to test <report> -m "수정 완료"
-```
-
----
-
-### 6.4 자동화 트리거 메커니즘 및 보안 경계
-
-#### 1. Rule 기반 자동화 vs Hook 기반 보완
-- **Rule 방식 (`.agents/rules/guard-workflow.md`)**: Antigravity CLI가 매 세션 시작 시 시스템 프롬프트에 자동 주입하는 규칙 파일에 *"QA 보고서 작성 시 `guard handoff send` 실행 / DEV 수정 완료 시 `guard audit` + `ack` + 역방향 `send` 실행"*을 정의합니다. AI가 자연스러운 요약(`-m`)을 작성하며, `guard` 런처 부트스트랩으로 자동 설치할 수 있습니다.
-- **Hook 방식 (`PostToolUse` / `Stop` 보완)**: LLM이 규칙 호출을 누락할 가능성을 0%로 줄여야 하는 핵심 산출물(`doc/test/*.md` 쓰기 등)은 `chatlog`와 동일하게 훅에서 결정적으로 핸드오프를 자동 발행할 수 있습니다.
-
-#### 2. 아키텍처 제약 및 신뢰 경계 (Trust Boundary)
-- **비동기 Pull 모델**: 대화형 `agy` 세션은 stdin 입력 대기 상태이므로 `guard`가 외부에서 에이전트를 강제 기동(Push)하지 않습니다. 대신 **비동기 인박스(Mailbox) + `guard top` 배지 알림 + 짧은 Pull 트리거(`"인박스 확인"`)**로 동작합니다.
+### 6.3 신뢰 경계 (Trust Boundary)
+- **Human-in-the-loop 게이트키퍼**: 핸드오프 승인은 조율자(사람)만 수행하며, 에이전트가 `run_command`로 `guard handoff approve`를 자가 호출하지 못하도록 `guard hook`에서 차단합니다. (상세: [08_handoff_protocol.md](./08_handoff_protocol.md#6-자동화-트리거-메커니즘-및-신뢰-경계))
 - **Scope Lock 권한 분리**: 에이전트가 `run_command`로 스스로 `guard scope clear`를 실행해 잠금을 해제하지 못하도록, **`guard hook`에서 에이전트의 `guard scope` 명령 실행을 차단**하고 사용자(`guard top` 또는 별도 터미널)만 Scope를 설정·해제하도록 신뢰 경계를 분리합니다.
 
 ---
 
-### 6.5 기존 3계층 아키텍처 통합 매핑
+### 6.4 기존 3계층 아키텍처 통합 매핑
 
 | 계층 | 추가/확장 모듈 | 책임 |
 | :--- | :--- | :--- |
 | **Core (`internal/core`)** | `EvalRequest.AllowedWritePaths`, Scope 평가 규칙 | 파일 I/O 없이 쓰기 대상 경로가 Allowlist에 포함되는지 순수 판정 |
 | **Hub (`internal/hub`)** | `session.Session.AllowedWritePaths`, `internal/hub/handoff` | 세션 Scope 영속화(`Flock` 보호) 및 핸드오프 큐 CRUD |
-| **Adapters (`internal/adapters`)** | `hook`, `launcher`, `tui` | 훅에서 Scope Lock 전달·차단, 런처에서 워크플로우 Rule 부트스트랩, TUI에서 Scope/Handoff 상태 시각화 |
+| **Adapters (`internal/adapters`)** | `hook`, `launcher`, `tui` | 훅에서 Scope Lock 전달·차단, 런처에서 워크플로우 Rule 부트스트랩 및 세션 바인딩, TUI에서 요약 모달 팝업(`modal.go`) 및 원키 승인 |
 | **CLI (`cmd/guard`)** | `guard scope`, `guard audit`, `guard handoff` | 서브커맨드 라우팅 및 `git diff` 기반 Audit 리포트 출력 |

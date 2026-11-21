@@ -6,6 +6,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"guard/internal/core"
+	"guard/internal/hub/handoff"
 )
 
 var (
@@ -39,6 +40,11 @@ var (
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(colorBlue).
 				Padding(0, 1)
+
+	handoffModalBorderStyle = lipgloss.NewStyle().
+				Border(lipgloss.DoubleBorder()).
+				BorderForeground(colorYellow).
+				Padding(1, 2)
 
 	panelTitleStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -111,5 +117,20 @@ func renderModeBadge(mode string) string {
 			label += strings.Repeat(" ", 4-len(label))
 		}
 		return lipgloss.NewStyle().Foreground(colorWhite).Bold(true).Render("[" + label + "]")
+	}
+}
+
+func renderHandoffTypeBadge(t handoff.HandoffType) string {
+	switch t {
+	case handoff.TypeFix:
+		return lipgloss.NewStyle().Foreground(colorRed).Bold(true).Render("[FIX   ]")
+	case handoff.TypeVerify:
+		return lipgloss.NewStyle().Foreground(colorCyan).Bold(true).Render("[VERIFY]")
+	case handoff.TypeTask:
+		return lipgloss.NewStyle().Foreground(colorYellow).Bold(true).Render("[TASK  ]")
+	case handoff.TypeReview:
+		return lipgloss.NewStyle().Foreground(colorBlue).Bold(true).Render("[REVIEW]")
+	default:
+		return lipgloss.NewStyle().Foreground(colorWhite).Bold(true).Render("[" + strings.ToUpper(string(t)) + "]")
 	}
 }

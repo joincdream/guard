@@ -21,6 +21,7 @@ type Input struct {
     } `json:"toolCall"`
     ToolName    string                 `json:"tool_name"`
     ToolArgs    map[string]interface{} `json:"tool_args"`
+    ToolInput   map[string]interface{} `json:"tool_input"`
     Path        string                 `json:"Path"`
     PathLower   string                 `json:"path"`
     CommandLine string                 `json:"CommandLine"`
@@ -51,28 +52,35 @@ type Output struct {
 ### 2.1 공개 타입 및 함수
 ```go
 type BannerInfo struct {
-    Mode           string
-    SessionID      string
-    Workspace      string
-    PolicySource   string
-    PolicyWarnings []string
-    CmdName        string
-    SkillPath      string
-    SkillCreated   bool
-    HookPath       string
-    HookUpdated    bool
-    HasHook        bool
+    Mode              string
+    SessionID         string
+    Workspace         string
+    PolicySource      string
+    PolicyWarnings    []string
+    CmdName           string
+    SkillPath         string
+    SkillCreated      bool
+    HookPath          string
+    HookUpdated       bool
+    HasHook           bool
+    RulePath          string
+    RuleCreated       bool
+    DeliveredHandoffs int
+    InboxPath         string
 }
 ```
 - `New(sessionMgr *session.Manager, stdout, stderr io.Writer) *Launcher`
+- `(l *Launcher) WithHandoffManager(m *handoff.Manager) *Launcher` — 테스트 또는 커스텀 핸드오프 매니저 주입
 - `(l *Launcher) Run(mode, workspace string, cmdArgs []string) int`
   - 빈 `cmdArgs` 시 `stderr` 오류 출력 후 종료 코드 `1`.
-  - 자식 프로세스 실행 시 `AGENT_MODE`, `GUARD_SESSION_ID` 환경변수 주입, 실제 자식 PID로 세션 생성, 종료 시 `defer Delete(sessionID)` 정리.
+  - 자식 프로세스 실행 시 `AGENT_MODE`, `GUARD_SESSION_ID`, `GUARD_INBOX_PATH` 환경변수 주입, 오프라인 대기 핸드오프(`ConsumePendingForMode`) 자동 소비 및 조건부 `AllowedWritePaths` 초기 바인딩, 실제 자식 PID로 세션 생성, 종료 시 `defer Delete(sessionID)` 및 `.inbox` 파일 정리.
+  - 워크스페이스 부트스트랩(`EnsureWorkspaceHook`, `EnsureWorkflowRule`)은 일반 셸 명령 실행 시 워크스페이스 오염을 방지하기 위해 `filepath.Base(cmdArgs[0]) == "agy"`일 때만 자동 실행.
   - `PolicyWarnings`가 있으면 배너에 `⚠️  [Policy Warning]` 출력.
   - `stdout`이 TTY(`*os.File` + `os.ModeCharDevice`)일 때만 ANSI OSC 타이틀 시퀀스(`\033]0;...\007`) 출력 (버퍼/파이프 출력 오염 금지).
 - `PrintBanner(w io.Writer, info BannerInfo)`
 - `EnsureAgentSkill(homeDir string) (skillPath string, created bool, err error)` — 미존재 시에만 생성, 기존 파일 보존.
 - `EnsureWorkspaceHook(workspace string) (hookPath string, updated bool, err error)` — `<workspace>/.agents/hooks.json`에 `"guard"` 키 병합(기존 `"obsidian-chatlog"` 등 키 보존, 손상 JSON은 덮어쓰지 않고 에러 반환).
+- `EnsureWorkflowRule(workspace string) (rulePath string, created bool, err error)` — `<workspace>/.agents/rules/guard-workflow.md` 미존재 시에만 생성, 기존 파일 보존.
 - `HasWorkspaceHook(workspace string) bool`
 
 ---
@@ -81,16 +89,20 @@ type BannerInfo struct {
 
 ### 3.1 공개 API
 - `NewModel(sessMgr *session.Manager) Model`
+- `NewModelWithHandoff(sessMgr *session.Manager, handoffMgr *handoff.Manager, workspaceRoot string) Model`
 - `Start(sessMgr *session.Manager) error`
+- `StartWithHandoff(sessMgr *session.Manager, handoffMgr *handoff.Manager, workspaceRoot string) error`
 
 ### 3.2 화면 및 인터랙션 계약
 - **활성 세션 테이블 (5컬럼)**: `ID | 모드 | 워크스페이스 | 최근 활동 | 차단` (`PID`/`상태` 컬럼 없음, `lipgloss.Width` 기반 1줄 정렬).
-- **주기 갱신**: 0.5초 틱마다 `CleanAndList()` 단일 스캔으로 목록 갱신.
+- **주기 갱신**: 0.5초 틱마다 `CleanAndList()` 및 핸드오프 큐 조회(`reloadHandoffs`) 수행.
 - **키 바인딩**:
   - `↑`/`k`, `↓`/`j`: 세션 커서 이동
   - `d`/`D`, `t`/`T`, `p`/`P`, `a`/`A`: 선택 세션 모드 즉시 전환 (`DEV`/`TEST`/`PLAN`/`ALL`)
   - `c`/`C`: 선택 세션 차단 카운트 0 리셋
   - `Space`: 전체 이벤트 로그 모달 토글 (`Esc` 닫기)
+  - `h`/`H`: 하단 패널 `최근 이벤트 로그 ↔ Handoff Queue` 전환
+  - 핸드오프 요약 모달 활성 시: `Enter`(승인·라우팅), `v`/`V`(참조 문서 256KB 상한 스크롤 뷰어), `Esc`(반려)
   - `?`: 도움말 오버레이 토글 (`Esc` 닫기)
   - `r`/`R`: 즉시 새로고침
   - `q`/`Q`/`Ctrl+C`: 종료
@@ -124,7 +136,8 @@ type BannerInfo struct {
 | `guard dev\|test\|plan\|all <cmd...>` / `guard run <mode> <cmd...>` | 지정 모드로 명령 격리 실행 | 자식 프로세스 종료 코드 |
 | `guard <executable...>` | 워크스페이스 기본 모드로 실행 | 자식 프로세스 종료 코드 |
 | `guard status` | 워크스페이스·모드·정책 출처(파싱 경고 포함)·활성 세션 요약 출력 | `0` |
-| `guard top` / `guard ui` | TUI 관제탑 실행 | `0` / `1` |
+| `guard top` / `guard ui` | TUI 관제탑 실행 (핸드오프 모달·큐 포함) | `0` / `1` |
+| `guard handoff <send\|inbox\|approve\|reject\|ack>` | 범용 핸드오프 티켓 발행·조회·승인·반려·완료 ([05_handoff_protocol_contract.md](./05_handoff_protocol_contract.md)) | `0` / `1` |
 | `guard clean [--all\|-a]` | 종료/무효 세션 정리 (`--all`: 전체 삭제) | `0` / `1` |
 | `guard reset <sessionId>` | 특정 세션 차단 카운트 0 초기화 | `0` / `1` |
 | `guard doc` / `guard sample` | 정책 스펙 및 Few-Shot 샘플 출력 | `0` |
