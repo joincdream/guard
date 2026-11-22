@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"os/exec"
 
 	"guard/internal/hub/setup"
 	"guard/internal/i18n"
@@ -60,10 +61,11 @@ func (a *cliApp) runInit(args []string) int {
 		icon, statusLabel := formatStepStatus(step.Status)
 		detail := step.Detail
 		if step.BackupPath != "" {
+			backupLabel := i18n.T("cli.init.detail.backup", step.BackupPath)
 			if detail != "" {
-				detail = fmt.Sprintf("%s, backup: %s", detail, step.BackupPath)
+				detail = fmt.Sprintf("%s, %s", detail, backupLabel)
 			} else {
-				detail = fmt.Sprintf("backup: %s", step.BackupPath)
+				detail = backupLabel
 			}
 		}
 		if detail != "" {
@@ -76,6 +78,9 @@ func (a *cliApp) runInit(args []string) int {
 	if res.DryRun {
 		fmt.Fprint(a.stdout, i18n.T("cli.init.done_dry_run"))
 	} else {
+		if _, err := exec.LookPath("guard"); err != nil {
+			fmt.Fprint(a.stdout, i18n.T("cli.init.warn_no_path"))
+		}
 		fmt.Fprint(a.stdout, i18n.T("cli.init.done"))
 	}
 	return 0

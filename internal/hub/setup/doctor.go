@@ -2,7 +2,6 @@ package setup
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +9,7 @@ import (
 
 	"guard/internal/hub/policy"
 	"guard/internal/hub/session"
+	"guard/internal/i18n"
 )
 
 type CheckSeverity string
@@ -105,42 +105,42 @@ func RunDoctor(opts DoctorOptions) DoctorReport {
 func checkBinaryPath(lookPath func(string) (string, error)) CheckResult {
 	res := CheckResult{
 		Code:    CodeBinaryPath,
-		Name:    "guard binary in PATH",
+		Name:    i18n.T("cli.doctor.name.doc001"),
 		Fixable: false,
 	}
 	binPath, err := lookPath("guard")
 	if err != nil {
 		res.Severity = SeverityError
-		res.Message = fmt.Sprintf("guard binary not found in PATH (%v); install with 'make install' or add it to PATH", err)
+		res.Message = i18n.T("cli.doctor.msg.doc001_err", err)
 		return res
 	}
 	res.Severity = SeverityOK
-	res.Message = fmt.Sprintf("found at %s", binPath)
+	res.Message = i18n.T("cli.doctor.msg.doc001_ok", binPath)
 	return res
 }
 
 func checkHooksJSON(workspaceRoot string, fix bool) CheckResult {
 	res := CheckResult{
 		Code: CodeHooksJSON,
-		Name: ".agents/hooks.json",
+		Name: i18n.T("cli.doctor.name.doc002"),
 	}
 	exists, validJSON, hasHook, err := InspectWorkspaceHook(workspaceRoot)
 	if err != nil {
 		res.Severity = SeverityError
 		res.Fixable = false
-		res.Message = fmt.Sprintf("failed to inspect .agents/hooks.json: %v", err)
+		res.Message = i18n.T("cli.doctor.msg.doc002_inspect_err", err)
 		return res
 	}
 	if exists && !validJSON {
 		res.Severity = SeverityError
 		res.Fixable = false
-		res.Message = ".agents/hooks.json contains invalid JSON (manual fix required to avoid data loss)"
+		res.Message = i18n.T("cli.doctor.msg.doc002_invalid_json")
 		return res
 	}
 	if exists && validJSON && hasHook {
 		res.Severity = SeverityOK
 		res.Fixable = true
-		res.Message = "PreToolUse 'guard hook' is registered"
+		res.Message = i18n.T("cli.doctor.msg.doc002_ok")
 		return res
 	}
 
@@ -148,20 +148,20 @@ func checkHooksJSON(workspaceRoot string, fix bool) CheckResult {
 	if fix {
 		if _, mergeErr := MergeWorkspaceHook(workspaceRoot, false); mergeErr != nil {
 			res.Severity = SeverityError
-			res.Message = fmt.Sprintf("failed to register guard hook: %v", mergeErr)
+			res.Message = i18n.T("cli.doctor.msg.doc002_fix_err", mergeErr)
 			return res
 		}
 		res.Severity = SeverityFixed
 		res.Fixed = true
-		res.Message = "registered PreToolUse 'guard hook' in .agents/hooks.json"
+		res.Message = i18n.T("cli.doctor.msg.doc002_fixed")
 		return res
 	}
 
 	res.Severity = SeverityError
 	if !exists {
-		res.Message = ".agents/hooks.json is missing (run 'guard init' or 'guard doctor --fix')"
+		res.Message = i18n.T("cli.doctor.msg.doc002_missing")
 	} else {
-		res.Message = ".agents/hooks.json does not register PreToolUse 'guard hook' (run 'guard doctor --fix')"
+		res.Message = i18n.T("cli.doctor.msg.doc002_no_hook")
 	}
 	return res
 }
@@ -169,7 +169,7 @@ func checkHooksJSON(workspaceRoot string, fix bool) CheckResult {
 func checkPolicyYAML(workspaceRoot string, fix bool) CheckResult {
 	res := CheckResult{
 		Code: CodePolicyYAML,
-		Name: "guard-policy.yaml",
+		Name: i18n.T("cli.doctor.name.doc003"),
 	}
 
 	homeDir, _ := os.UserHomeDir()
@@ -182,7 +182,7 @@ func checkPolicyYAML(workspaceRoot string, fix bool) CheckResult {
 	if len(polRes.Warnings) > 0 {
 		res.Severity = SeverityError
 		res.Fixable = false
-		res.Message = fmt.Sprintf("policy parse error: %s", strings.Join(polRes.Warnings, "; "))
+		res.Message = i18n.T("cli.doctor.msg.doc003_parse_err", strings.Join(polRes.Warnings, "; "))
 		return res
 	}
 
@@ -191,7 +191,7 @@ func checkPolicyYAML(workspaceRoot string, fix bool) CheckResult {
 		if _, statErr := os.Stat(policyPath); statErr == nil {
 			res.Severity = SeverityError
 			res.Fixable = false
-			res.Message = fmt.Sprintf("%s exists but could not be loaded; refusing to overwrite", policyPath)
+			res.Message = i18n.T("cli.doctor.msg.doc003_exists_unloaded", policyPath)
 			return res
 		}
 		res.Fixable = true
@@ -200,34 +200,34 @@ func checkPolicyYAML(workspaceRoot string, fix bool) CheckResult {
 			yamlContent, err := RenderPolicyYAML(preset)
 			if err != nil {
 				res.Severity = SeverityError
-				res.Message = fmt.Sprintf("failed to render preset %s: %v", preset, err)
+				res.Message = i18n.T("cli.doctor.msg.doc003_render_err", preset, err)
 				return res
 			}
 			if err := writeFileAtomic(policyPath, []byte(yamlContent), 0o644); err != nil {
 				res.Severity = SeverityError
-				res.Message = fmt.Sprintf("failed to write guard-policy.yaml: %v", err)
+				res.Message = i18n.T("cli.doctor.msg.doc003_write_err", err)
 				return res
 			}
 			res.Severity = SeverityFixed
 			res.Fixed = true
-			res.Message = fmt.Sprintf("created guard-policy.yaml (preset: %s)", preset)
+			res.Message = i18n.T("cli.doctor.msg.doc003_fixed", preset)
 			return res
 		}
 		res.Severity = SeverityWarn
-		res.Message = "no guard-policy.yaml found; using builtin fallback (run 'guard init' or 'guard doctor --fix')"
+		res.Message = i18n.T("cli.doctor.msg.doc003_builtin")
 		return res
 	}
 
 	res.Severity = SeverityOK
 	res.Fixable = false
-	res.Message = fmt.Sprintf("loaded %s (%d rules)", polRes.Source, len(polRes.Policy.Rules))
+	res.Message = i18n.T("cli.doctor.msg.doc003_ok", polRes.Source, len(polRes.Policy.Rules))
 	return res
 }
 
 func checkWorkflowRule(workspaceRoot string, fix bool) CheckResult {
 	res := CheckResult{
 		Code:    CodeWorkflowRule,
-		Name:    ".agents/rules/guard-workflow.md",
+		Name:    i18n.T("cli.doctor.name.doc004"),
 		Fixable: true,
 	}
 
@@ -238,28 +238,28 @@ func checkWorkflowRule(workspaceRoot string, fix bool) CheckResult {
 			if fix {
 				if _, _, createErr := EnsureWorkflowRule(workspaceRoot); createErr != nil {
 					res.Severity = SeverityError
-					res.Message = fmt.Sprintf("failed to create guard-workflow.md: %v", createErr)
+					res.Message = i18n.T("cli.doctor.msg.doc004_create_err", createErr)
 					return res
 				}
 				res.Severity = SeverityFixed
 				res.Fixed = true
-				res.Message = "created .agents/rules/guard-workflow.md with trigger: always_on"
+				res.Message = i18n.T("cli.doctor.msg.doc004_created")
 				return res
 			}
 			res.Severity = SeverityWarn
-			res.Message = ".agents/rules/guard-workflow.md is missing (run 'guard init' or 'guard doctor --fix')"
+			res.Message = i18n.T("cli.doctor.msg.doc004_missing")
 			return res
 		}
 		res.Severity = SeverityError
 		res.Fixable = false
-		res.Message = fmt.Sprintf("failed to read guard-workflow.md: %v", err)
+		res.Message = i18n.T("cli.doctor.msg.doc004_read_err", err)
 		return res
 	}
 
 	content := string(data)
 	if HasAlwaysOnFrontmatter(content) {
 		res.Severity = SeverityOK
-		res.Message = "present with trigger: always_on frontmatter"
+		res.Message = i18n.T("cli.doctor.msg.doc004_ok")
 		return res
 	}
 
@@ -267,24 +267,24 @@ func checkWorkflowRule(workspaceRoot string, fix bool) CheckResult {
 		updated := InjectAlwaysOnFrontmatter(content)
 		if writeErr := writeFileAtomic(rulePath, []byte(updated), 0o644); writeErr != nil {
 			res.Severity = SeverityError
-			res.Message = fmt.Sprintf("failed to inject trigger: always_on: %v", writeErr)
+			res.Message = i18n.T("cli.doctor.msg.doc004_inject_err", writeErr)
 			return res
 		}
 		res.Severity = SeverityFixed
 		res.Fixed = true
-		res.Message = "injected trigger: always_on frontmatter (existing content preserved)"
+		res.Message = i18n.T("cli.doctor.msg.doc004_injected")
 		return res
 	}
 
 	res.Severity = SeverityWarn
-	res.Message = "missing 'trigger: always_on' YAML frontmatter (run 'guard doctor --fix')"
+	res.Message = i18n.T("cli.doctor.msg.doc004_no_frontmatter")
 	return res
 }
 
 func checkSessionStore(sessMgr *session.Manager, fix bool) CheckResult {
 	res := CheckResult{
 		Code:    CodeSessionStore,
-		Name:    "session store (~/.guard/sessions)",
+		Name:    i18n.T("cli.doctor.name.doc005"),
 		Fixable: true,
 	}
 
@@ -295,19 +295,19 @@ func checkSessionStore(sessMgr *session.Manager, fix bool) CheckResult {
 			if fix {
 				if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
 					res.Severity = SeverityError
-					res.Message = fmt.Sprintf("failed to create session dir %s: %v", dir, mkErr)
+					res.Message = i18n.T("cli.doctor.msg.doc005_mkdir_err", dir, mkErr)
 					return res
 				}
 				dirCreated = true
 			} else {
 				res.Severity = SeverityWarn
-				res.Message = fmt.Sprintf("session directory %s does not exist yet (run 'guard doctor --fix')", dir)
+				res.Message = i18n.T("cli.doctor.msg.doc005_missing", dir)
 				return res
 			}
 		} else {
 			res.Severity = SeverityError
 			res.Fixable = false
-			res.Message = fmt.Sprintf("cannot access session dir %s: %v", dir, err)
+			res.Message = i18n.T("cli.doctor.msg.doc005_access_err", dir, err)
 			return res
 		}
 	}
@@ -315,7 +315,7 @@ func checkSessionStore(sessMgr *session.Manager, fix bool) CheckResult {
 	if err := checkDirWritable(dir); err != nil {
 		res.Severity = SeverityError
 		res.Fixable = false
-		res.Message = fmt.Sprintf("session dir %s is not writable: %v", dir, err)
+		res.Message = i18n.T("cli.doctor.msg.doc005_not_writable", dir, err)
 		return res
 	}
 
@@ -323,7 +323,7 @@ func checkSessionStore(sessMgr *session.Manager, fix bool) CheckResult {
 	if err != nil {
 		res.Severity = SeverityError
 		res.Fixable = false
-		res.Message = fmt.Sprintf("failed to list sessions in %s: %v", dir, err)
+		res.Message = i18n.T("cli.doctor.msg.doc005_list_err", dir, err)
 		return res
 	}
 
@@ -339,28 +339,28 @@ func checkSessionStore(sessMgr *session.Manager, fix bool) CheckResult {
 			removed, cleanErr := sessMgr.CleanStaleSessions()
 			if cleanErr != nil {
 				res.Severity = SeverityError
-				res.Message = fmt.Sprintf("failed to clean stale sessions: %v", cleanErr)
+				res.Message = i18n.T("cli.doctor.msg.doc005_clean_err", cleanErr)
 				return res
 			}
 			res.Severity = SeverityFixed
 			res.Fixed = true
-			res.Message = fmt.Sprintf("cleaned %d stale session(s) in %s", len(removed), dir)
+			res.Message = i18n.T("cli.doctor.msg.doc005_cleaned", len(removed), dir)
 			return res
 		}
 		res.Severity = SeverityWarn
-		res.Message = fmt.Sprintf("found %d stale session(s) in %s (run 'guard doctor --fix' or 'guard clean')", staleCount, dir)
+		res.Message = i18n.T("cli.doctor.msg.doc005_stale", staleCount, dir)
 		return res
 	}
 
 	if dirCreated {
 		res.Severity = SeverityFixed
 		res.Fixed = true
-		res.Message = fmt.Sprintf("created writable session dir %s", dir)
+		res.Message = i18n.T("cli.doctor.msg.doc005_created", dir)
 		return res
 	}
 
 	res.Severity = SeverityOK
-	res.Message = fmt.Sprintf("writable (%s, %d active session(s))", dir, len(sessions))
+	res.Message = i18n.T("cli.doctor.msg.doc005_ok", dir, len(sessions))
 	return res
 }
 
@@ -380,13 +380,13 @@ func checkDirWritable(dir string) error {
 func checkSymlinkPath(workspaceRoot string) CheckResult {
 	res := CheckResult{
 		Code:    CodeSymlinkPath,
-		Name:    "workspace symlink consistency",
+		Name:    i18n.T("cli.doctor.name.doc006"),
 		Fixable: false,
 	}
 
 	if strings.TrimSpace(workspaceRoot) == "" {
 		res.Severity = SeverityWarn
-		res.Message = "workspace root is empty"
+		res.Message = i18n.T("cli.doctor.msg.doc006_empty")
 		return res
 	}
 
@@ -394,17 +394,17 @@ func checkSymlinkPath(workspaceRoot string) CheckResult {
 	resolved, err := filepath.EvalSymlinks(cleanRoot)
 	if err != nil {
 		res.Severity = SeverityWarn
-		res.Message = fmt.Sprintf("failed to resolve symlinks for %s: %v", cleanRoot, err)
+		res.Message = i18n.T("cli.doctor.msg.doc006_resolve_err", cleanRoot, err)
 		return res
 	}
 	resolved = filepath.Clean(resolved)
 	if cleanRoot != resolved {
 		res.Severity = SeverityWarn
-		res.Message = fmt.Sprintf("workspace path uses symlink (%s -> %s); consider using canonical path", cleanRoot, resolved)
+		res.Message = i18n.T("cli.doctor.msg.doc006_mismatch", cleanRoot, resolved)
 		return res
 	}
 
 	res.Severity = SeverityOK
-	res.Message = fmt.Sprintf("canonical path (%s)", resolved)
+	res.Message = i18n.T("cli.doctor.msg.doc006_ok", resolved)
 	return res
 }

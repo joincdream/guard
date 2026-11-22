@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"guard/internal/i18n"
 )
 
 type InitOptions struct {
@@ -69,7 +71,7 @@ func RunInit(opts InitOptions) (InitResult, error) {
 		}
 		detail := ""
 		if len(hookRes.PreservedKeys) > 0 {
-			detail = "preserved: " + strings.Join(hookRes.PreservedKeys, ", ")
+			detail = i18n.T("cli.init.detail.preserved", strings.Join(hookRes.PreservedKeys, ", "))
 		}
 		res.Steps = append(res.Steps, StepResult{
 			Target: ".agents/hooks.json",
@@ -85,7 +87,7 @@ func RunInit(opts InitOptions) (InitResult, error) {
 			return res, err
 		}
 		policyPath := filepath.Join(opts.WorkspaceRoot, "guard-policy.yaml")
-		step, err := writeManagedFile(policyPath, "guard-policy.yaml", []byte(policyContent), "preset: "+preset, opts.DryRun, opts.Force)
+		step, err := writeManagedFile(policyPath, "guard-policy.yaml", []byte(policyContent), i18n.T("cli.init.detail.preset", preset), opts.DryRun, opts.Force)
 		if err != nil {
 			return res, err
 		}
