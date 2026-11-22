@@ -79,8 +79,8 @@ type BannerInfo struct {
   - `stdout`이 TTY(`*os.File` + `os.ModeCharDevice`)일 때만 ANSI OSC 타이틀 시퀀스(`\033]0;...\007`) 출력 (버퍼/파이프 출력 오염 금지).
 - `PrintBanner(w io.Writer, info BannerInfo)`
 - `EnsureAgentSkill(homeDir string) (skillPath string, created bool, err error)` — 미존재 시에만 생성, 기존 파일 보존.
-- `EnsureWorkspaceHook(workspace string) (hookPath string, updated bool, err error)` — `<workspace>/.agents/hooks.json`에 `"guard"` 키 병합(기존 `"obsidian-chatlog"` 등 키 보존, 손상 JSON은 덮어쓰지 않고 에러 반환).
-- `EnsureWorkflowRule(workspace string) (rulePath string, created bool, err error)` — `<workspace>/.agents/rules/guard-workflow.md` 미존재 시에만 생성, 기존 파일 보존.
+- `EnsureWorkspaceHook(workspace string) (hookPath string, updated bool, err error)` — `setup.MergeWorkspaceHook`을 호출해 `<workspace>/.agents/hooks.json`에 `guard` PreToolUse hook을 Atomic Write로 merge(기존 `obsidian-chatlog` 등 타 키 보존, 손상된 JSON은 덮어쓰지 않고 에러 반환).
+- `EnsureWorkflowRule(workspace string) (rulePath string, created bool, err error)` — `setup.EnsureWorkflowRule`을 호출해 `<workspace>/.agents/rules/guard-workflow.md` 미존재 시 `trigger: always_on` YAML frontmatter 포함 템플릿으로 생성, 기존 파일 보존.
 - `HasWorkspaceHook(workspace string) bool`
 
 ---
@@ -131,7 +131,9 @@ type BannerInfo struct {
 | 명령 | 동작 계약 | 종료 코드 |
 | :--- | :--- | :---: |
 | `guard` (stdin 파이프) / `guard hook` | PreToolUse 훅 실행 | `0` (정상) / `1` (I/O 오류) |
-| `guard` (TTY) / `guard help` / `-h` / `--help` | 도움말 출력 | `0` |
+| `guard` (TTY) / `guard help` / `-h` / `--help` | 도움말 출력 (`guard init`, `guard doctor` 포함) | `0` |
+| `guard init [flags]` | 워크스페이스 스택 감지 및 hook·정책·룰·초기 모드 초기화 ([06_init_automation_contract.md](./06_init_automation_contract.md)) | `0` / `1` |
+| `guard doctor [--fix] [--json]` | `DOC-001`~`DOC-006` 환경/설정 진단 및 자동 복구 ([06_init_automation_contract.md](./06_init_automation_contract.md)) | `0` / `1` |
 | `guard dev\|test\|plan\|all` | `.agents/current_mode` 저장 및 활성 세션 모드 갱신 | `0` / `1` |
 | `guard dev\|test\|plan\|all <cmd...>` / `guard run <mode> <cmd...>` | 지정 모드로 명령 격리 실행 | 자식 프로세스 종료 코드 |
 | `guard <executable...>` | 워크스페이스 기본 모드로 실행 | 자식 프로세스 종료 코드 |

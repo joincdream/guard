@@ -53,6 +53,12 @@ func (a *cliApp) run(args []string) int {
 	cmd := strings.ToLower(strings.TrimSpace(args[0]))
 
 	switch cmd {
+	case "init":
+		return a.runInit(args[1:])
+
+	case "doctor":
+		return a.runDoctor(args[1:])
+
 	case "hook":
 		return a.runHook()
 
@@ -239,7 +245,7 @@ func (a *cliApp) printDoc() {
 
 func findWorkspaceRoot() string {
 	if ws := strings.TrimSpace(os.Getenv("WORKSPACE_ROOT")); ws != "" {
-		return ws
+		return resolveCanonicalPath(ws)
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -248,7 +254,7 @@ func findWorkspaceRoot() string {
 	dir := cwd
 	for {
 		if _, err := os.Stat(filepath.Join(dir, ".agents")); err == nil {
-			return dir
+			return resolveCanonicalPath(dir)
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -256,7 +262,15 @@ func findWorkspaceRoot() string {
 		}
 		dir = parent
 	}
-	return cwd
+	return resolveCanonicalPath(cwd)
+}
+
+func resolveCanonicalPath(p string) string {
+	cleaned := filepath.Clean(p)
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return cleaned
 }
 
 func isStdinPiped() bool {

@@ -159,6 +159,7 @@ flowchart TD
 - **CLI 서브커맨드**:
   - `guard handoff send --to <plan|dev|test|all|sessionId> [--type <task|verify|fix|review>] [--ref <file>...] [--targets <glob>...] [--parent <id>] [-m "요약"]`
   - `guard handoff inbox [--all]`: 현재 세션/모드 앞으로 도착한 미확인 핸드오프 목록 조회
+  - `guard handoff watch [--session <id>] [--mode <mode>] [--timeout <dur>]`: 승인된 핸드오프가 도착할 때까지 블로킹 대기 후 Markdown Envelope을 stdout으로 출력하고 종료 (Reactive Wakeup 자동 수신용)
   - `guard handoff approve <id>`: 티켓 승인 및 인박스 전달 / 오프라인 대기 (TUI 및 CLI 공용)
   - `guard handoff reject <id> [-m "사유"]`: 티켓 반려
   - `guard handoff ack <id>`: 수신 세션의 작업 완료 처리
@@ -222,6 +223,57 @@ sequenceDiagram
 - **Human-in-the-loop 승인 게이트**: 에이전트가 발행한 모든 핸드오프는 기본적으로 `pending` 상태로 큐에 저장되며, 사용자가 `guard top` 또는 `guard handoff approve`로 명시적으로 승인하기 전에는 수신 세션의 인박스에 전달되거나 외부 액션이 실행되지 않습니다.
 - **승인 명령어 격리**: 에이전트가 `run_command`로 `guard handoff approve`를 직접 실행해 승인 게이트를 우회하지 못하도록 **`guard hook`에서 에이전트의 `guard handoff approve` 실행을 차단**합니다.
 
+### 6.3 수신 자동화: 무프롬프트 인박스 주입 및 유휴 세션 자동 기상 (Auto-Receive)
+기존 방식에서는 사용자가 `guard top`에서 승인한 뒤에도 수신 세션 창으로 이동해 *"도착한 핸드오프 확인해줘"*라고 직접 프롬프팅해야 했습니다. `guard`는 PTY/터미널 멀티플렉서(`tmux`) 의존성 없이 Antigravity 네이티브 기능만으로 수신을 자동화하는 **2계층 수신 모델**을 채택합니다.
+
+#### 계층 1 (기본): `SessionStart` / `PreInvocation` 훅 기반 자동 주입 (`injectSteps`)
+- `.agents/hooks.json`에 `PreToolUse` 외에 `SessionStart` 및 `PreInvocation` 훅(`guard hook`)을 등록합니다.
+- 훅 실행 시 현재 세션/모드 앞으로 `approved`(미-`ack`, 미주입) 상태의 핸드오프가 있으면, 훅 응답의 `injectSteps`로 Markdown Envelope을 자동 주입합니다:
+  ```json
+  {
+    "injectSteps": [
+      {
+        "systemMessage": {
+          "systemMessage": "<!-- GUARD_HANDOFF_ENVELOPE: START ... -->\n승인된 핸드오프가 도착했습니다. 참조 문서를 검토하고 지시된 작업을 수행한 뒤 `guard handoff ack <id>`를 실행하세요."
+        }
+      }
+    ]
+  }
+  ```
+- **중복 주입 방지**: 한 번 주입된 티켓 ID는 세션 상태(`DeliveredHandoffIDs`)에 기록해 동일 티켓이 매 턴 반복 주입되지 않도록 합니다.
+- **특징**: 새 세션을 열면(`guard dev agy`) 첫 턴부터 즉시 컨텍스트가 로드되며, 기존 세션에서도 다음 턴이 시작되는 순간 별도 조회 명령 없이 인박스가 주입됩니다.
+
+#### 계층 2 (고급): `guard handoff watch` + Reactive Wakeup (유휴 세션 완전 자동 기상)
+- `hooks.json` 이벤트는 턴이 시작되어야 발동하므로, 이미 유휴(Idle) 상태로 대기 중인 대화창을 **사용자 입력 0회로 자동 기상**시키려면 Antigravity의 **백그라운드 태스크 완료 알림(Reactive Wakeup)**을 활용합니다.
+- **동작 흐름**:
+  ```mermaid
+  sequenceDiagram
+      participant Target as 수신 agy 세션 (유휴 대기)
+      participant Watch as guard handoff watch (백그라운드 태스크)
+      participant Hub as Guard Hub (~/.guard)
+      participant Top as guard top (사용자 승인)
+
+      Target->>Watch: 1. 백그라운드 실행 (guard handoff watch)
+      Watch->>Hub: 2. 인박스/큐 감시 (블로킹 대기, CPU ~0%)
+      Top->>Hub: 3. 사용자 [Enter] 승인 → approved & 인박스 기록
+      Hub-->>Watch: 4. 신규 approved 티켓 감지
+      Watch-->>Target: 5. Envelope stdout 출력 후 종료 (Exit 0)
+      Note over Target: 6. Reactive Wakeup 자동 기상
+      Target->>Target: 7. 참조 문서 자동 검토 및 작업 수행 → ack
+  ```
+- **주의사항**:
+  - Human-in-the-loop 신뢰 경계를 유지하기 위해 `watch`는 오직 **`approved` 상태**의 티켓에만 반응합니다(`pending` 티켓에는 반응하지 않음).
+  - 작업 1건을 완료(`ack`)한 뒤 계속 자동 수신을 유지하려면 `guard handoff watch`를 백그라운드로 재실행합니다.
+
+#### 수신 자동화 방식 비교 (설계 결정 근거)
+
+| 방식 | 유휴 세션 자동 기상 | 기존 대화 맥락 유지 | 외부 의존성 | 채택 여부 |
+| :--- | :---: | :---: | :---: | :--- |
+| **1. `SessionStart` / `PreInvocation` (`injectSteps`)** | ❌ (다음 턴/새 세션 시 주입) | ✅ | 없음 | **기본 표준 채택** |
+| **2. `guard handoff watch` + Reactive Wakeup** | ✅ (완전 무프롬프트) | ✅ | 없음 | **고급 표준 채택** |
+| **3. 승인 시 `agy -p` 원샷 프로세스 기동** | ✅ (신규 프로세스) | ❌ | 없음 | 선택적 확장(추후 검토) |
+| **4. `tmux` / `zellij` `send-keys` 키 주입** | ✅ | ✅ | `tmux`/`zellij` 필수 | 미채택 (4.2절 원칙 유지) |
+
 ---
 
 ## 7. 기존 3계층 아키텍처 통합 매핑
@@ -229,6 +281,6 @@ sequenceDiagram
 | 계층 | 추가/확장 모듈 | 책임 |
 | :--- | :--- | :--- |
 | **Core (`internal/core`)** | `command.go` 차단 규칙 확장 | 에이전트의 `guard handoff approve` 자체 승인 차단 |
-| **Hub (`internal/hub`)** | `internal/hub/handoff` (`model.go`, `queue.go`, `envelope.go`) | `HandoffItem` CRUD(`Flock` 동시성 보호), 미실행 세션 대기 큐, Markdown Envelope 생성 |
-| **Adapters (`internal/adapters`)** | `launcher`, `tui` (`modal.go`) | 런처 초기화 시 워크플로우 Rule 설치 및 대기 티켓 로드, TUI 요약 모달 및 큐 패널 렌더링 |
-| **CLI (`cmd/guard`)** | `guard handoff` (`send`, `inbox`, `approve`, `reject`, `ack`) | 서브커맨드 라우팅 및 외부 액션 훅 실행 |
+| **Hub (`internal/hub`)** | `internal/hub/handoff` (`model.go`, `queue.go`, `envelope.go`, `watch.go`) | `HandoffItem` CRUD(`Flock` 동시성 보호), 미실행 세션 대기 큐, Markdown Envelope 생성, `approved` 티켓 감시(`watch`) |
+| **Adapters (`internal/adapters`)** | `hook`, `launcher`, `tui` (`modal.go`) | `SessionStart`/`PreInvocation` 훅 인박스 자동 주입(`injectSteps`), 런처 초기화 시 워크플로우 Rule 설치 및 대기 티켓 로드, TUI 요약 모달 및 큐 패널 렌더링 |
+| **CLI (`cmd/guard`)** | `guard handoff` (`send`, `inbox`, `watch`, `approve`, `reject`, `ack`) | 서브커맨드 라우팅 및 외부 액션 훅 실행 |
