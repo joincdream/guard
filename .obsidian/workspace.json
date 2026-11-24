@@ -27,30 +27,16 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "doc/spec/04_edge_cases_and_invariants.md",
+                "file": "doc/research/open-code-review.md",
                 "mode": "preview",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "04_edge_cases_and_invariants"
-            }
-          },
-          {
-            "id": "92fd47ac00900aea",
-            "type": "leaf",
-            "state": {
-              "type": "markdown",
-              "state": {
-                "file": "doc/09_init_automation_design.md",
-                "mode": "source",
-                "source": false
-              },
-              "icon": "lucide-file",
-              "title": "09_init_automation_design"
+              "title": "open-code-review"
             }
           }
         ],
-        "currentTab": 2
+        "currentTab": 1
       }
     ],
     "direction": "vertical"
@@ -215,11 +201,17 @@
       "vscode-editor:Create Code File": false
     }
   },
-  "active": "92fd47ac00900aea",
+  "active": "b3e4cd36919b425c",
   "lastOpenFiles": [
     "chat/guard.md",
-    "README.md",
+    "doc/research/open-code-review.md",
+    "doc/11_review_mode_design.md",
     "doc/test/init-automation-test-scenarios.md",
+    "doc/spec/04_edge_cases_and_invariants.md",
+    "doc/10_prompt_guardrail_design.md",
+    "an71_mcp_knowledge_rag_completion_report.pdf",
+    "doc/09_init_automation_design.md",
+    "README.md",
     "test/e2e/init_doctor_cli_test.go",
     "internal/i18n/init_doctor_i18n_test.go",
     "internal/adapters/launcher/init_bootstrap_compat_test.go",
@@ -231,14 +223,11 @@
     "internal/hub/setup/initializer.go",
     "internal/hub/setup/templates.go",
     "internal/hub/setup/hooks_merge.go",
-    "internal/hub/setup/detector.go",
     "doc/spec/06_init_automation_contract.md",
-    "doc/09_init_automation_design.md",
     "doc/research/agent-laboratory-review.md",
     "docs/research/agent-laboratory-review.md",
     "doc/08_handoff_protocol.md",
     "test/handoff-user-test-guide.md",
-    "doc/spec/04_edge_cases_and_invariants.md",
     "README.ko.md",
     "doc/test/handoff-qa-test-brief.md",
     "doc/spec/03_adapters_cli_contract.md",
@@ -249,8 +238,6 @@
     "doc/dev/handoff_protocol_dev_plan.md",
     "doc/test/qa-phase4-report.md",
     "doc/test/qa-phase3-report.md",
-    "doc/test/test-scenario-plan.md",
-    "doc/test/qa-phase2-report.md",
-    "doc/07_refactoring_plan.md"
+    "doc/test/test-scenario-plan.md"
   ]
 }
