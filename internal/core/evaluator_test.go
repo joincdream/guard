@@ -514,3 +514,208 @@ func TestEvaluate_NilPolicy(t *testing.T) {
 		t.Fatalf("expected nil policy to allow, got deny: %q", dec.Reason)
 	}
 }
+
+func TestMatchCommandPattern(t *testing.T) {
+	tests := []struct {
+		name    string
+		cmd     string
+		pattern string
+		want    bool
+	}{
+		{name: "exact plain match", cmd: "go test", pattern: "go test", want: true},
+		{name: "plain prefix with args", cmd: "go test -v ./internal/core/...", pattern: "go test", want: true},
+		{name: "plain prefix boundary no partial word match", cmd: "go testdata", pattern: "go test", want: false},
+		{name: "wildcard star matches slashes and spaces", cmd: "go test -v ./internal/core/...", pattern: "go test*", want: true},
+		{name: "wildcard star matches bare command", cmd: "go test", pattern: "go test*", want: true},
+		{name: "make test wildcard", cmd: "make test-unit", pattern: "make test*", want: true},
+		{name: "make build allowed against make test*", cmd: "make build", pattern: "make test*", want: false},
+		{name: "script path normalization", cmd: "./scripts/run_tests.sh --ci", pattern: "scripts/run_tests.sh*", want: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MatchCommandPattern(tc.cmd, tc.pattern)
+			if got != tc.want {
+				t.Errorf("MatchCommandPattern(%q, %q) = %v, want %v", tc.cmd, tc.pattern, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEvaluate_CommandExecRules(t *testing.T) {
+	pol := &Policy{
+		Version: "1.0",
+		Rules: []Rule{
+			{
+				Name: "guard-test-command-exec",
+				Mode: "DEV",
+				Type: "command",
+				Patterns: []string{
+					"go test*",
+					"make test*",
+					"pytest",
+				},
+				ExcludePatterns: []string{
+					"go test -list*",
+				},
+				Message: "[POLICY VIOLATION] DEV mode test execution blocked",
+			},
+			{
+				Name: "guard-plan-git-commit",
+				Mode: "PLAN",
+				Type: "exec",
+				Patterns: []string{
+					"git commit*",
+				},
+				Message: "[POLICY VIOLATION] PLAN mode git commit blocked",
+			},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		mode        string
+		cmdLine     string
+		wantAllowed bool
+		wantRule    string
+	}{
+		{
+			name:        "DEV bare go test denied",
+			mode:        "DEV",
+			cmdLine:     "go test",
+			wantAllowed: false,
+			wantRule:    "guard-test-command-exec",
+		},
+		{
+			name:        "DEV go test with flags and package denied",
+			mode:        "DEV",
+			cmdLine:     "go test -v ./internal/core/...",
+			wantAllowed: false,
+			wantRule:    "guard-test-command-exec",
+		},
+		{
+			name:        "DEV go test with env vars and absolute binary path denied",
+			mode:        "DEV",
+			cmdLine:     "CGO_ENABLED=0 /usr/local/go/bin/go test ./...",
+			wantAllowed: false,
+			wantRule:    "guard-test-command-exec",
+		},
+		{
+			name:        "DEV go -C dir test denied",
+			mode:        "DEV",
+			cmdLine:     "go -C internal/core test -v .",
+			wantAllowed: false,
+			wantRule:    "guard-test-command-exec",
+		},
+		{
+			name:        "DEV chained go build && go test denied",
+			mode:        "DEV",
+			cmdLine:     "go build ./... && go test ./...",
+			wantAllowed: false,
+			wantRule:    "guard-test-command-exec",
+		},
+		{
+			name:        "DEV subshell parens (cd pkg && go test) denied",
+			mode:        "DEV",
+			cmdLine:     "(cd internal/core && go test ./...)",
+			wantAllowed: false,
+			wantRule:    "guard-test-command-exec",
+		},
+		{
+			name:        "DEV bash -c go test bypass denied",
+			mode:        "DEV",
+			cmdLine:     `bash -lc "go test -v ./..."`,
+			wantAllowed: false,
+			wantRule:    "guard-test-command-exec",
+		},
+		{
+			name:        "DEV command substitution $(go test) denied",
+			mode:        "DEV",
+			cmdLine:     `out=$(go test ./...)`,
+			wantAllowed: false,
+			wantRule:    "guard-test-command-exec",
+		},
+		{
+			name:        "DEV timeout wrapper around go test denied",
+			mode:        "DEV",
+			cmdLine:     "timeout 30s go test ./...",
+			wantAllowed: false,
+			wantRule:    "guard-test-command-exec",
+		},
+		{
+			name:        "DEV python subprocess go test bypass denied",
+			mode:        "DEV",
+			cmdLine:     `python3 -c "import subprocess; subprocess.run(['go', 'test', './...'])"`,
+			wantAllowed: false,
+			wantRule:    "guard-test-command-exec",
+		},
+		{
+			name:        "DEV make test with -C flag denied",
+			mode:        "DEV",
+			cmdLine:     "make -C . test",
+			wantAllowed: false,
+			wantRule:    "guard-test-command-exec",
+		},
+		{
+			name:        "DEV excluded go test -list allowed",
+			mode:        "DEV",
+			cmdLine:     "go test -list . ./internal/core",
+			wantAllowed: true,
+		},
+		{
+			name:        "DEV go build and go vet remain allowed",
+			mode:        "DEV",
+			cmdLine:     "go build ./... && go vet ./...",
+			wantAllowed: true,
+		},
+		{
+			name:        "DEV make build remains allowed",
+			mode:        "DEV",
+			cmdLine:     "make build",
+			wantAllowed: true,
+		},
+		{
+			name:        "DEV command -v go allowed",
+			mode:        "DEV",
+			cmdLine:     "command -v go",
+			wantAllowed: true,
+		},
+		{
+			name:        "DEV string mention in git commit or handoff message not falsely blocked",
+			mode:        "DEV",
+			cmdLine:     `guard handoff send --to test -m "Please run go test ./..." && git commit -m "block go test in dev"`,
+			wantAllowed: true,
+		},
+		{
+			name:        "TEST mode allows go test",
+			mode:        "TEST",
+			cmdLine:     "go test -v ./...",
+			wantAllowed: true,
+		},
+		{
+			name:        "ALL mode bypasses command rules",
+			mode:        "ALL",
+			cmdLine:     "go test -v ./...",
+			wantAllowed: true,
+		},
+		{
+			name:        "PLAN mode blocks git commit even though git commit is in safe read/write list",
+			mode:        "PLAN",
+			cmdLine:     `git commit -m "wip"`,
+			wantAllowed: false,
+			wantRule:    "guard-plan-git-commit",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dec := Evaluate(tc.mode, pol, "run_command", "", tc.cmdLine)
+			if dec.Allowed != tc.wantAllowed {
+				t.Fatalf("Evaluate(%q, cmd=%q) Allowed = %v, want %v (reason: %q)", tc.mode, tc.cmdLine, dec.Allowed, tc.wantAllowed, dec.Reason)
+			}
+			if !tc.wantAllowed && dec.RuleName != tc.wantRule {
+				t.Errorf("Evaluate(%q, cmd=%q) RuleName = %q, want %q", tc.mode, tc.cmdLine, dec.RuleName, tc.wantRule)
+			}
+		})
+	}
+}

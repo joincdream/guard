@@ -111,15 +111,21 @@ func containsGuardHandoffApprove(script string) bool {
 }
 
 // evaluateCommandRules parses a shell command line into segments and inspects each segment
-// for read/write policy violations and shell bypass attempts.
+// for explicit command execution rules, read/write policy violations, and shell bypass attempts.
 func evaluateCommandRules(policy *Policy, currentMode string, cmdLine string) (string, string) {
+	if hasCommandRules(policy, currentMode) {
+		if ruleName, reason := evaluateCommandExecRulesDepth(policy, currentMode, cmdLine, 0); reason != "" {
+			return ruleName, reason
+		}
+	}
+
 	segments := splitCommandSegments(cmdLine)
 	if len(segments) == 0 {
 		return "", ""
 	}
 
-	hasReadRules := hasRulesFor(policy, currentMode, "read")
-	hasWriteRules := hasRulesFor(policy, currentMode, "write")
+	hasReadRules := hasRulesFor(policy, currentMode, RuleTypeRead)
+	hasWriteRules := hasRulesFor(policy, currentMode, RuleTypeWrite)
 
 	for _, seg := range segments {
 		trimmed := strings.TrimSpace(seg)
@@ -152,6 +158,481 @@ func evaluateCommandRules(policy *Policy, currentMode string, cmdLine string) (s
 	}
 
 	return "", ""
+}
+
+func hasCommandRules(policy *Policy, currentMode string) bool {
+	if policy == nil {
+		return false
+	}
+	for _, r := range policy.Rules {
+		if (r.Mode == "" || strings.EqualFold(r.Mode, currentMode)) && isCommandRuleType(r.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+func evaluateCommandExecRulesDepth(policy *Policy, currentMode string, cmdLine string, depth int) (string, string) {
+	if depth > 3 {
+		return "", ""
+	}
+
+	// Inspect command substitutions $(...) and `...` first.
+	for _, sub := range extractCommandSubstitutions(cmdLine) {
+		if ruleName, reason := evaluateCommandExecRulesDepth(policy, currentMode, sub, depth+1); reason != "" {
+			return ruleName, reason
+		}
+	}
+
+	segments := splitCommandSegments(cmdLine)
+	for _, seg := range segments {
+		trimmed := trimSubshellParens(strings.TrimSpace(seg))
+		if trimmed == "" {
+			continue
+		}
+
+		tokens := tokenizeSegment(trimmed)
+		if len(tokens) == 0 {
+			continue
+		}
+
+		cleanTokens := stripRedirectionTokens(tokens)
+		if len(cleanTokens) == 0 {
+			continue
+		}
+
+		for _, cmdSlice := range collectUnwrappedCommands(cleanTokens) {
+			candidates := buildCommandCandidates(cmdSlice)
+			if ruleName, reason := evaluateExecCommandRules(policy, currentMode, candidates); reason != "" {
+				return ruleName, reason
+			}
+
+			baseCmd := strings.ToLower(path.Base(cmdSlice[0]))
+			args := cmdSlice[1:]
+
+			if isShellInterpreter(baseCmd) {
+				for i := 0; i < len(args); i++ {
+					if isShellInlineFlag(args[i]) && i+1 < len(args) {
+						if ruleName, reason := evaluateCommandExecRulesDepth(policy, currentMode, args[i+1], depth+1); reason != "" {
+							return ruleName, reason
+						}
+						i++
+					}
+				}
+			} else if inlineScriptRunners[baseCmd] {
+				for i := 0; i < len(args); i++ {
+					if (args[i] == "-c" || args[i] == "-e" || args[i] == "--eval") && i+1 < len(args) {
+						if ruleName, reason := inspectInlineScriptCommandExec(policy, currentMode, args[i+1]); reason != "" {
+							return ruleName, reason
+						}
+						i++
+					}
+				}
+			}
+		}
+	}
+
+	return "", ""
+}
+
+func isShellInterpreter(baseCmd string) bool {
+	switch baseCmd {
+	case "sh", "bash", "zsh", "dash", "ksh":
+		return true
+	default:
+		return false
+	}
+}
+
+func isShellInlineFlag(arg string) bool {
+	if !strings.HasPrefix(arg, "-") || strings.HasPrefix(arg, "--") || len(arg) < 2 {
+		return false
+	}
+	return strings.ContainsRune(arg[1:], 'c')
+}
+
+func inspectInlineScriptCommandExec(policy *Policy, currentMode string, script string) (string, string) {
+	stmts := strings.FieldsFunc(script, func(r rune) bool {
+		return r == ';' || r == '\n'
+	})
+	for _, stmt := range stmts {
+		cands := extractScriptCandidates(stmt)
+		for k := 0; k < len(cands); k++ {
+			joined := strings.Join(cands[k:], " ")
+			baseJoined := path.Base(cands[k])
+			if len(cands[k+1:]) > 0 {
+				baseJoined += " " + strings.Join(cands[k+1:], " ")
+			}
+			checkList := []string{baseJoined}
+			if joined != baseJoined {
+				checkList = append(checkList, joined)
+			}
+			if ruleName, reason := evaluateExecCommandRules(policy, currentMode, checkList); reason != "" {
+				return ruleName, reason
+			}
+		}
+	}
+	return "", ""
+}
+
+func stripRedirectionTokens(tokens []string) []string {
+	out := make([]string, 0, len(tokens))
+	for i := 0; i < len(tokens); i++ {
+		if isRedirectionOp(tokens[i]) {
+			i++ // skip redirection target
+			continue
+		}
+		out = append(out, tokens[i])
+	}
+	return out
+}
+
+func isEnvAssignmentToken(tok string) bool {
+	return strings.Contains(tok, "=") && !strings.HasPrefix(tok, "=") && !strings.Contains(tok, "/")
+}
+
+// collectUnwrappedCommands returns slices starting at the outer executable and any inner executable
+// unwrapped past common command wrappers (env, sudo, command, nohup, time, nice, timeout).
+func collectUnwrappedCommands(tokens []string) [][]string {
+	var slices [][]string
+	cur := skipEnvAssignments(tokens)
+	for depth := 0; depth < 5 && len(cur) > 0; depth++ {
+		slices = append(slices, cur)
+		next := unwrapOnce(cur)
+		if len(next) == 0 || len(next) == len(cur) {
+			break
+		}
+		cur = skipEnvAssignments(next)
+	}
+	return slices
+}
+
+func skipEnvAssignments(tokens []string) []string {
+	i := 0
+	for i < len(tokens) && (tokens[i] == "" || isEnvAssignmentToken(tokens[i])) {
+		i++
+	}
+	return tokens[i:]
+}
+
+func unwrapOnce(tokens []string) []string {
+	if len(tokens) < 2 {
+		return nil
+	}
+	base := strings.ToLower(path.Base(tokens[0]))
+	args := tokens[1:]
+
+	switch base {
+	case "env":
+		i := 0
+		for i < len(args) {
+			a := args[i]
+			if a == "-u" || a == "--unset" || a == "-C" || a == "--chdir" || a == "-S" {
+				i += 2
+				continue
+			}
+			if strings.HasPrefix(a, "-") || isEnvAssignmentToken(a) {
+				i++
+				continue
+			}
+			break
+		}
+		if i < len(args) {
+			return args[i:]
+		}
+	case "sudo":
+		i := 0
+		for i < len(args) {
+			a := args[i]
+			if a == "-u" || a == "-g" || a == "-C" || a == "-D" || a == "-R" || a == "-T" {
+				i += 2
+				continue
+			}
+			if strings.HasPrefix(a, "-") {
+				i++
+				continue
+			}
+			break
+		}
+		if i < len(args) {
+			return args[i:]
+		}
+	case "command", "nohup", "time":
+		i := 0
+		for i < len(args) && strings.HasPrefix(args[i], "-") {
+			if base == "command" && (args[i] == "-v" || args[i] == "-V") {
+				return nil // command -v/-V only queries path, does not execute
+			}
+			i++
+		}
+		if i < len(args) {
+			return args[i:]
+		}
+	case "nice":
+		i := 0
+		for i < len(args) {
+			if args[i] == "-n" || args[i] == "--adjustment" {
+				i += 2
+				continue
+			}
+			if strings.HasPrefix(args[i], "-") {
+				i++
+				continue
+			}
+			break
+		}
+		if i < len(args) {
+			return args[i:]
+		}
+	case "timeout":
+		i := 0
+		for i < len(args) {
+			a := args[i]
+			if a == "-k" || a == "-s" || a == "--kill-after" || a == "--signal" {
+				i += 2
+				continue
+			}
+			if strings.HasPrefix(a, "-") {
+				i++
+				continue
+			}
+			break
+		}
+		// Skip the duration positional argument before the wrapped command.
+		if i+1 < len(args) {
+			return args[i+1:]
+		}
+	}
+	return nil
+}
+
+func buildCommandCandidates(cmdTokens []string) []string {
+	if len(cmdTokens) == 0 {
+		return nil
+	}
+	rawExec := cmdTokens[0]
+	baseCmd := path.Base(rawExec)
+	args := cmdTokens[1:]
+
+	var cands []string
+	seen := make(map[string]bool, 3)
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s != "" && !seen[s] {
+			seen[s] = true
+			cands = append(cands, s)
+		}
+	}
+
+	if len(args) > 0 {
+		rest := strings.Join(args, " ")
+		add(baseCmd + " " + rest)
+		if strings.Contains(rawExec, "/") {
+			add(normalizePath(rawExec) + " " + rest)
+		}
+		if stripped := stripLeadingSubcommandFlags(baseCmd, args); len(stripped) > 0 && len(stripped) != len(args) {
+			add(baseCmd + " " + strings.Join(stripped, " "))
+		}
+	} else {
+		add(baseCmd)
+		if strings.Contains(rawExec, "/") {
+			add(normalizePath(rawExec))
+		}
+	}
+
+	return cands
+}
+
+func stripLeadingSubcommandFlags(baseCmd string, args []string) []string {
+	switch strings.ToLower(baseCmd) {
+	case "go":
+		i := 0
+		for i < len(args) {
+			if args[i] == "-C" && i+1 < len(args) {
+				i += 2
+				continue
+			}
+			if strings.HasPrefix(args[i], "-C=") {
+				i++
+				continue
+			}
+			break
+		}
+		return args[i:]
+	case "git":
+		i := 0
+		for i < len(args) {
+			a := args[i]
+			if (a == "-C" || a == "-c" || a == "--git-dir" || a == "--work-tree") && i+1 < len(args) {
+				i += 2
+				continue
+			}
+			if strings.HasPrefix(a, "-") {
+				i++
+				continue
+			}
+			break
+		}
+		return args[i:]
+	case "make":
+		var targets []string
+		for i := 0; i < len(args); i++ {
+			a := args[i]
+			if (a == "-C" || a == "-f" || a == "--directory" || a == "--file") && i+1 < len(args) {
+				i++
+				continue
+			}
+			if strings.HasPrefix(a, "-") || isEnvAssignmentToken(a) {
+				continue
+			}
+			targets = append(targets, a)
+		}
+		return targets
+	}
+	return args
+}
+
+func trimSubshellParens(seg string) string {
+	s := strings.TrimSpace(seg)
+	for strings.HasPrefix(s, "(") {
+		s = strings.TrimSpace(s[1:])
+	}
+	openCount, closeCount := countUnquotedParens(s)
+	for strings.HasSuffix(s, ")") && closeCount > openCount {
+		s = strings.TrimSpace(s[:len(s)-1])
+		openCount, closeCount = countUnquotedParens(s)
+	}
+	return s
+}
+
+func countUnquotedParens(s string) (int, int) {
+	inSingle, inDouble, escaped := false, false, false
+	opens, closes := 0, 0
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		if ch == '\'' && !inDouble {
+			inSingle = !inSingle
+			continue
+		}
+		if ch == '"' && !inSingle {
+			inDouble = !inDouble
+			continue
+		}
+		if !inSingle && !inDouble {
+			if ch == '(' {
+				opens++
+			} else if ch == ')' {
+				closes++
+			}
+		}
+	}
+	return opens, closes
+}
+
+func extractCommandSubstitutions(cmdLine string) []string {
+	var subs []string
+	inSingle := false
+	escaped := false
+	n := len(cmdLine)
+
+	for i := 0; i < n; i++ {
+		ch := cmdLine[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		if ch == '\'' {
+			inSingle = !inSingle
+			continue
+		}
+		if inSingle {
+			continue
+		}
+
+		// $( ... )
+		if ch == '$' && i+1 < n && cmdLine[i+1] == '(' {
+			depth := 1
+			start := i + 2
+			j := start
+			subSingle, subEsc := false, false
+			for j < n && depth > 0 {
+				c := cmdLine[j]
+				if subEsc {
+					subEsc = false
+					j++
+					continue
+				}
+				if c == '\\' && !subSingle {
+					subEsc = true
+					j++
+					continue
+				}
+				if c == '\'' {
+					subSingle = !subSingle
+					j++
+					continue
+				}
+				if !subSingle {
+					if c == '(' {
+						depth++
+					} else if c == ')' {
+						depth--
+						if depth == 0 {
+							break
+						}
+					}
+				}
+				j++
+			}
+			if depth == 0 && j > start {
+				subs = append(subs, cmdLine[start:j])
+				i = j
+				continue
+			}
+		}
+
+		// ` ... `
+		if ch == '`' {
+			start := i + 1
+			j := start
+			subEsc := false
+			for j < n {
+				c := cmdLine[j]
+				if subEsc {
+					subEsc = false
+					j++
+					continue
+				}
+				if c == '\\' {
+					subEsc = true
+					j++
+					continue
+				}
+				if c == '`' {
+					break
+				}
+				j++
+			}
+			if j < n && j > start {
+				subs = append(subs, cmdLine[start:j])
+				i = j
+				continue
+			}
+		}
+	}
+	return subs
 }
 
 func hasRulesFor(policy *Policy, currentMode string, actionType string) bool {

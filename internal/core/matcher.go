@@ -8,7 +8,10 @@ import (
 	"sync"
 )
 
-var compiledGlobCache sync.Map // map[string]*regexp.Regexp
+var (
+	compiledGlobCache    sync.Map // map[string]*regexp.Regexp
+	compiledCmdGlobCache sync.Map // map[string]*regexp.Regexp
+)
 
 func getCompiledGlob(pattern string) (*regexp.Regexp, error) {
 	if cached, ok := compiledGlobCache.Load(pattern); ok {
@@ -175,4 +178,124 @@ func globToRegexp(pattern string) (*regexp.Regexp, error) {
 
 	b.WriteString("$")
 	return regexp.Compile(b.String())
+}
+
+func getCompiledCommandGlob(pattern string) (*regexp.Regexp, error) {
+	if cached, ok := compiledCmdGlobCache.Load(pattern); ok {
+		return cached.(*regexp.Regexp), nil
+	}
+	re, err := commandGlobToRegexp(pattern)
+	if err != nil {
+		return nil, err
+	}
+	compiledCmdGlobCache.Store(pattern, re)
+	return re, nil
+}
+
+func commandGlobToRegexp(pattern string) (*regexp.Regexp, error) {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '*':
+			b.WriteString(".*")
+		case '?':
+			b.WriteString(".")
+		default:
+			b.WriteString(regexp.QuoteMeta(string(pattern[i])))
+		}
+	}
+	b.WriteString("$")
+	return regexp.Compile(b.String())
+}
+
+func normalizeCommandSpaces(s string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
+}
+
+// MatchCommandPattern checks whether a normalized command string (e.g. "go test -v ./...")
+// matches a command rule pattern.
+//   - Plain patterns without '*' or '?' (e.g. "go test", "pytest") match either the exact command
+//     or a token-delimited prefix ("go test ...").
+//   - Wildcard patterns containing '*' or '?' (e.g. "go test*", "make test*") match across the
+//     entire command string, including spaces and path separators.
+func MatchCommandPattern(cmdStr string, pattern string) bool {
+	cleanCmd := normalizeCommandSpaces(cmdStr)
+	cleanPattern := normalizeCommandSpaces(strings.Trim(strings.TrimSpace(pattern), `"'`))
+	if cleanCmd == "" || cleanPattern == "" {
+		return false
+	}
+
+	if strings.Contains(cleanPattern, "/") {
+		for strings.HasPrefix(cleanCmd, "./") {
+			cleanCmd = strings.TrimPrefix(cleanCmd, "./")
+		}
+		for strings.HasPrefix(cleanPattern, "./") {
+			cleanPattern = strings.TrimPrefix(cleanPattern, "./")
+		}
+	}
+
+	if !strings.ContainsAny(cleanPattern, "*?") {
+		return cleanCmd == cleanPattern || strings.HasPrefix(cleanCmd, cleanPattern+" ")
+	}
+
+	re, err := getCompiledCommandGlob(cleanPattern)
+	if err != nil {
+		return false
+	}
+	return re.MatchString(cleanCmd)
+}
+
+func isCommandRuleType(ruleType string) bool {
+	return strings.EqualFold(ruleType, RuleTypeCommand) || strings.EqualFold(ruleType, RuleTypeExec)
+}
+
+// evaluateExecCommandRules evaluates candidate normalized command strings against all
+// command/exec policy rules matching currentMode.
+func evaluateExecCommandRules(policy *Policy, currentMode string, candidates []string) (string, string) {
+	if policy == nil || len(candidates) == 0 {
+		return "", ""
+	}
+
+	for _, rule := range policy.Rules {
+		if rule.Mode != "" && !strings.EqualFold(rule.Mode, currentMode) {
+			continue
+		}
+		if !isCommandRuleType(rule.Type) {
+			continue
+		}
+
+		matched := false
+		for _, pattern := range rule.Patterns {
+			for _, cand := range candidates {
+				if MatchCommandPattern(cand, pattern) {
+					matched = true
+					break
+				}
+			}
+			if matched {
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		if isCommandExcluded(candidates, rule.ExcludePatterns) {
+			continue
+		}
+		return rule.Name, rule.Message
+	}
+
+	return "", ""
+}
+
+func isCommandExcluded(candidates []string, excludePatterns []string) bool {
+	for _, ex := range excludePatterns {
+		for _, cand := range candidates {
+			if MatchCommandPattern(cand, ex) {
+				return true
+			}
+		}
+	}
+	return false
 }

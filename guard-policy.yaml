@@ -13,7 +13,16 @@ rules:
       - "**/testutil/**"
       - "**/tests/**"
       - "**/000/**"
-    message: "[POLICY VIOLATION] 당신은 테스트 파일(*_test.go 등)에 접근할 권한이 없습니다. 어떤 우회 시도(Python 스크립트 작성, 와일드카드 덤프, 셸 명령어 조작 등)도 엄격히 금지됩니다. 접근 시도를 즉시 중단하고, 요구사항 명세서와 'go test' 실행 결과(stdout)만을 참조하여 개발을 완료하십시오."
+    message: "[POLICY VIOLATION] 당신은 테스트 파일(*_test.go 등)에 접근할 권한이 없습니다. 어떤 우회 시도(Python 스크립트 작성, 와일드카드 덤프, 셸 명령어 조작 등)도 엄격히 금지됩니다. 접근 시도를 즉시 중단하고, 요구사항 명세서만을 참조하여 개발 및 컴파일 검증(go build, go vet)을 완료하십시오."
+
+  # 1-2. DEV 모드 (Cleanroom): 테스트 명령어 실행 차단 (출력 기반 땜빵 코드 방지)
+  - name: "guard-test-command-exec"
+    mode: "DEV"
+    type: "command"
+    patterns:
+      - "go test*"
+      - "make test*"
+    message: "[POLICY VIOLATION] DEV 모드에서는 테스트 명령어(go test, make test 등)를 직접 실행할 수 없습니다. 컴파일 및 정적 검증(go build, go vet)만 수행하고, 테스트 검증은 TEST 모드로 핸드오프하십시오."
 
   # 2. PLAN 모드: 프로덕션 소스 코드 임의 수정 차단
   - name: "guard-source-code-write"

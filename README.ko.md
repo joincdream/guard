@@ -11,12 +11,12 @@
 ## ✨ 핵심 기능 (Key Features)
 
 - 🔒 **물리적 정책 가드레일 (Mode-based Guardrail)**
-  - **DEV 모드 (Cleanroom)**: 테스트 파일(`*_test.go`, `*.spec.ts` 등) 열람을 차단하여 테스트 치팅 및 정답 하드코딩 방지.
+  - **DEV 모드 (Cleanroom)**: 테스트 파일(`*_test.go`, `*.spec.ts` 등) 열람 및 테스트 실행 명령(`type: "command"`, 예: `go test*`)을 차단하여 테스트 치팅 및 출력 기반 땜빵 코드 작성 방지.
   - **PLAN 모드 (설계/기획)**: 프로덕션 소스 코드(`src/internal/**` 등) 수정을 차단하고 문서 작성만 유도.
   - **TEST 모드 (TDD)**: 프로덕션 내부 구현을 은닉하고 인터페이스/계약(`contract`) 및 테스트 코드만 다루도록 격리.
   - **ALL 모드**: 필요 시 모든 제한을 일시 해제.
-- 🚫 **셸 명령어 우회 원천 차단 (Bypass Prevention)**
-  - 단순 파일 도구뿐만 아니라 `cat`, `head`, `tail`, 와일드카드 덤프, `git show/diff`, `python -c`, `bash -c`, 리다이렉션(`>`, `>>`) 등을 통한 우회 시도를 감지하여 차단.
+- 🚫 **셸 명령어 실행 제어 및 우회 원천 차단 (Command & Bypass Prevention)**
+  - 단순 파일 도구뿐만 아니라 `cat`, `head`, `tail`, 와일드카드 덤프, `git show/diff`, `python -c`, `bash -c`, 서브셸(`$(...)`), 명령 래퍼(`env`, `sudo`, `timeout`), 리다이렉션(`>`, `>>`) 등을 통한 우회 시도를 감지하여 차단.
 - 🚀 **Zero-Config 런처 (`guard dev agy`)**
   - 복잡한 환경변수 설정(`export AGENT_MODE=...`) 없이 명령어 한 줄로 시각적 브리핑 배너와 함께 agy 세션 기동.
 - 🎛️ **TUI 관제탑 (`guard top`)**
@@ -147,7 +147,16 @@ rules:
       - "*_test.go"
       - "*.test.ts"
       - "**/tests/**"
-    message: "[POLICY VIOLATION] DEV 모드에서는 테스트 파일 열람이 금지됩니다. 명세서와 테스트 stdout만 참조하세요."
+    message: "[POLICY VIOLATION] DEV 모드에서는 테스트 파일 열람이 금지됩니다. 명세서와 컴파일 검증만 참조하세요."
+
+  # 1-2. DEV 모드: 테스트 출력 기반 땜빵 코드 방지를 위한 테스트 명령어 실행 차단
+  - name: "guard-test-command-exec"
+    mode: "DEV"
+    type: "command"
+    patterns:
+      - "go test*"
+      - "make test*"
+    message: "[POLICY VIOLATION] DEV 모드에서는 테스트 명령어(go test, make test 등) 실행이 금지됩니다. 컴파일 검증(go build, go vet)만 수행하고 검증은 TEST 모드로 핸드오프하세요."
 
   # 2. PLAN 모드: 소스 코드 수정 차단
   - name: "guard-source-code-write"

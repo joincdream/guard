@@ -16,7 +16,7 @@
   "cli.switch.desc.dev": "   • DEV (Cleanroom) mode: Reading test files (*_test.go) and shell bypasses are blocked.",
   "cli.switch.desc.test": "   • TEST (TDD) mode: Reading production code is blocked; only contracts and test files are allowed.",
   "cli.switch.desc.plan": "   • PLAN (Design) mode: Modifying production source code is blocked; only documentation is allowed.",
-  "cli.switch.desc.all": "   • ALL mode: All file read/write restrictions are lifted.",
+  "cli.switch.desc.all": "   • ALL mode: All file read/write and command restrictions are lifted.",
   "cli.status.title": "🛡️  [guard] Status Summary\n",
   "cli.status.workspace": "   • Workspace     : %s\n",
   "cli.status.default_mode": "   • Default Mode  : %s\n",

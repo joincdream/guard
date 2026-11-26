@@ -51,8 +51,8 @@ Antigravity CLI(`agy`)와 같은 LLM 기반 자율 에이전트는 코드 작성
 
 ### FR-2: 선언적 정책 관리 (`guard-policy.yaml`)
 - **FR-2.1 (YAML 스키마)**: 정책 파일은 버전(`version`)과 규칙 목록(`rules`)을 지원해야 한다.
-- **FR-2.2 (규칙 필드)**: 각 규칙은 이름(`name`), 대상 모드(`mode`), 행위 유형(`type`: read/write), 대상 패턴(`patterns`), 예외 패턴(`exclude_patterns`), 위반 메시지(`message`)를 지원해야 한다.
-- **FR-2.3 (패턴 매칭 지원)**: 접미사(`*_test.go`), 기본 Glob(`*.ts`), 다중 디렉터리 와일드카드(`**/tests/**`, `src/internal/**`)를 완벽히 지원해야 한다.
+- **FR-2.2 (규칙 필드)**: 각 규칙은 이름(`name`), 대상 모드(`mode`), 행위 유형(`type`: `read`/`write`/`command`), 대상 패턴(`patterns`), 예외 패턴(`exclude_patterns`), 위반 메시지(`message`)를 지원해야 한다.
+- **FR-2.3 (패턴 매칭 지원)**: 접미사(`*_test.go`), 기본 Glob(`*.ts`), 다중 디렉터리 와일드카드(`**/tests/**`, `src/internal/**`) 및 셸 명령어 패턴(`go test*`, `make test*`)을 완벽히 지원해야 한다.
 - **FR-2.4 (다중 경로 탐색)**: 정책 파일은 다음 우선순위로 로드되어야 한다:
   1. 환경변수 `GUARD_POLICY_PATH`
   2. 현재 작업 디렉터리의 `./guard-policy.yaml`
@@ -67,6 +67,7 @@ Antigravity CLI(`agy`)와 같은 LLM 기반 자율 에이전트는 코드 작성
 - **FR-3.4 (셸 뷰어 우회 차단)**: DEV 모드에서 `cat`, `head`, `tail`, `more`, `less`, `strings` 및 와일드카드 전개(`cat test/*`)를 통한 테스트 파일 열람을 차단해야 한다.
 - **FR-3.5 (Git 및 인라인 스크립트 차단)**: `git show/diff`, `python -c`, `node -e`, `bash -c` 등을 통해 차단 대상 파일을 조회하려는 시도를 차단해야 한다.
 - **FR-3.6 (PLAN 쓰기 차단)**: PLAN 모드에서 리다이렉션(`>`, `>>`), `tee`, `sed -i` 등을 통한 소스 코드 수정 시도를 차단해야 한다.
+- **FR-3.7 (모드별 명령어 실행 차단)**: `type: "command"` 규칙 지정 시 체이닝(`&&`, `;`), 서브셸(`bash -c`, `$(...)`), 래퍼(`env`, `sudo`, `timeout`), 서브커맨드 앞단 플래그(`go -C dir test`)를 포함한 명령어 실행 시도를 차단해야 한다.
 
 ### FR-4: 세션 상태 관리 및 자동 수거 (Session GC)
 - **FR-4.1 (세션 파일 분리)**: 동시성 충돌 방지를 위해 각 세션은 독립 파일(`~/.guard/sessions/<sessionId>.json`)로 격리 관리되어야 한다.

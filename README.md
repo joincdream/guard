@@ -11,12 +11,12 @@
 ## ✨ Key Features
 
 - 🔒 **Mode-Based Physical Guardrails**
-  - **DEV Mode (Cleanroom)**: Blocks reading test files (`*_test.go`, `*.spec.ts`, etc.) to prevent test cheating and hardcoded answers.
+  - **DEV Mode (Cleanroom)**: Blocks reading test files (`*_test.go`, `*.spec.ts`, etc.) and optionally blocks running test commands (`type: "command"`, e.g. `go test*`) to prevent test cheating and output-driven hardcoded answers.
   - **PLAN Mode (Design / Planning)**: Blocks modifying production source code (`src/internal/**`, etc.) so the agent focuses strictly on documentation and design.
   - **TEST Mode (TDD)**: Hides internal production implementations and restricts access to interfaces/contracts (`contract`) and test code.
   - **ALL Mode**: Temporarily lifts all restrictions when needed.
-- 🚫 **Shell Bypass Prevention**
-  - Detects and blocks bypass attempts not only through standard file tools, but also via `cat`, `head`, `tail`, wildcard dumps, `git show/diff`, `python -c`, `bash -c`, and shell redirections (`>`, `>>`).
+- 🚫 **Shell Bypass & Command Execution Prevention**
+  - Detects and blocks bypass attempts not only through standard file tools, but also via `cat`, `head`, `tail`, wildcard dumps, `git show/diff`, `python -c`, `bash -c`, subshells (`$(...)`), wrappers (`env`, `sudo`, `timeout`), and shell redirections (`>`, `>>`).
 - 🚀 **Zero-Config Launcher (`guard dev agy`)**
   - Starts an `agy` session with a visual briefing banner in a single command—no manual environment variable setup (`export AGENT_MODE=...`) required.
 - 🎛️ **TUI Control Tower (`guard top`)**
@@ -147,7 +147,16 @@ rules:
       - "*_test.go"
       - "*.test.ts"
       - "**/tests/**"
-    message: "[POLICY VIOLATION] Reading test files is forbidden in DEV mode. Refer only to specifications and test stdout."
+    message: "[POLICY VIOLATION] Reading test files is forbidden in DEV mode. Refer only to specifications and compile checks."
+
+  # 1-2. DEV mode: Block running test commands to prevent output-driven overfitting
+  - name: "guard-test-command-exec"
+    mode: "DEV"
+    type: "command"
+    patterns:
+      - "go test*"
+      - "make test*"
+    message: "[POLICY VIOLATION] Running test commands is forbidden in DEV mode. Run compile checks (go build, go vet) and hand off verification to TEST mode."
 
   # 2. PLAN mode: Block modifying source code
   - name: "guard-source-code-write"

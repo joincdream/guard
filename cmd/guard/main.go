@@ -240,7 +240,7 @@ func (a *cliApp) printHelp() {
 }
 
 func (a *cliApp) printDoc() {
-	fmt.Fprint(a.stdout, policyDocSpec)
+	fmt.Fprint(a.stdout, PolicyDoc())
 }
 
 func findWorkspaceRoot() string {

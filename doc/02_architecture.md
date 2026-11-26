@@ -82,8 +82,8 @@ flowchart TD
 | 컴포넌트 | 패키지 경로 | 주요 역할 및 상세 기능 |
 | :--- | :--- | :--- |
 | **Policy Evaluator** | `internal/core/evaluator.go` | • 입력받은 `(모드, 정책 규칙셋, 도구명, 대상 경로/명령어)`를 평가하여 최종 허용/차단(`Decision`) 및 위반 메시지를 결정하는 코어 오케스트레이터 |
-| **Path Matcher** | `internal/core/matcher.go` | • 파일 경로 패턴 매칭 엔진<br>• 접미사(`*_test.go`), 기본 Glob(`*.ts`), 다중 디렉터리 와일드카드(`**/tests/**`, `src/internal/**`) 및 예외 패턴(`exclude_patterns`)을 정규식 및 경로 트리로 정밀 검증 |
-| **Command Analyzer** | `internal/core/command.go` | • 셸 명령어 파싱 및 우회 공격 탐지 엔진<br>• 안전 명령어 화이트리스트(`git status`, `go build`, `go vet`) 판별<br>• 파일 뷰어(`cat`, `head`, `tail` 및 와일드카드 전개), Git 조회(`git show`, `git diff`), 인라인 스크립트(`python -c`, `node -e`), 파일 덮어쓰기(`>`, `tee`, `sed -i`) 분석 |
+| **Path Matcher** | `internal/core/matcher.go` | • 파일 경로 및 명령어 패턴 매칭 엔진<br>• 접미사(`*_test.go`), 기본 Glob(`*.ts`), 다중 디렉터리 와일드카드(`**/tests/**`, `src/internal/**`), 명령어 패턴(`go test*`, `make test*`) 및 예외 패턴(`exclude_patterns`)을 정밀 검증 |
+| **Command Analyzer** | `internal/core/command.go` | • 셸 명령어 파싱, 명령어 실행 차단(`type: "command"`) 및 우회 공격 탐지 엔진<br>• 체이닝/서브셸(`$(...)`, `bash -c`), 래퍼(`env`, `sudo`, `timeout`), 앞단 플래그(`go -C dir test`) 정규화 검사<br>• 안전 명령어 화이트리스트(`git status`, `go build`, `go vet`) 판별 및 파일 뷰어(`cat`, `head`, `tail`), Git 조회(`git show`, `git diff`), 인라인 스크립트(`python -c`, `node -e`), 파일 덮어쓰기(`>`, `tee`, `sed -i`) 분석 |
 
 #### 그룹 3: 상태 및 정책 허브 (`internal/hub`)
 > 모든 어댑터가 공유하는 **단일 진실 공급원(Single Source of Truth)** 인프라 계층입니다.

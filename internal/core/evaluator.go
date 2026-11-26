@@ -12,6 +12,13 @@ const (
 	ModeQA   = "QA"
 )
 
+const (
+	RuleTypeRead    = "read"
+	RuleTypeWrite   = "write"
+	RuleTypeCommand = "command"
+	RuleTypeExec    = "exec"
+)
+
 // NormalizeMode trims whitespace and converts a guardrail mode string to uppercase.
 func NormalizeMode(mode string) string {
 	return strings.ToUpper(strings.TrimSpace(mode))
@@ -27,7 +34,7 @@ func IsBypassMode(mode string) bool {
 type Rule struct {
 	Name            string   `yaml:"name"`
 	Mode            string   `yaml:"mode"` // DEV, PLAN, TEST, or empty for all modes
-	Type            string   `yaml:"type"` // read, write
+	Type            string   `yaml:"type"` // read, write, command (or exec)
 	Patterns        []string `yaml:"patterns"`
 	ExcludePatterns []string `yaml:"exclude_patterns"`
 	Message         string   `yaml:"message"`

@@ -16,7 +16,7 @@
   "cli.switch.desc.dev": "   • 개발(Cleanroom) 모드: 테스트 파일(*_test.go) 열람 및 셸 우회가 차단됩니다.",
   "cli.switch.desc.test": "   • 테스트(TDD) 모드: 프로덕션 코드 열람이 차단되며, 계약 및 테스트 파일만 허용됩니다.",
   "cli.switch.desc.plan": "   • 기획/설계 모드: 프로덕션 소스 코드 수정이 차단되며, 문서 작성만 허용됩니다.",
-  "cli.switch.desc.all": "   • 전체 허용 모드: 모든 파일 열람 및 수정 제한이 해제됩니다.",
+  "cli.switch.desc.all": "   • 전체 허용 모드: 모든 파일 열람·수정 및 명령어 제한이 해제됩니다.",
   "cli.status.title": "🛡️  [guard] 상태 요약\n",
   "cli.status.workspace": "   • 워크스페이스 : %s\n",
   "cli.status.default_mode": "   • 기본 모드    : %s\n",
