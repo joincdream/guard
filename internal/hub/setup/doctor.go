@@ -138,6 +138,12 @@ func checkHooksJSON(workspaceRoot string, fix bool) CheckResult {
 		return res
 	}
 	if exists && validJSON && hasHook {
+		if dupKeys, dupErr := FindGuardPreToolUseHookKeys(workspaceRoot); dupErr == nil && len(dupKeys) > 1 {
+			res.Severity = SeverityWarn
+			res.Fixable = false
+			res.Message = i18n.T("cli.doctor.msg.doc002_duplicate", strings.Join(dupKeys, ", "))
+			return res
+		}
 		res.Severity = SeverityOK
 		res.Fixable = true
 		res.Message = i18n.T("cli.doctor.msg.doc002_ok")

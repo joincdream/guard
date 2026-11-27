@@ -1403,3 +1403,154 @@ Alibaba의 [open-code-review](https://github.com/alibaba/open-code-review)(`ocr`
 
 ---
 
+## 🧑‍💻 User · `2026-11-25 14:56:45` {#step-0}
+
+로그가 "중복해서 출력" 되고 있습니다. 검토해주세요.
+
+---
+
+## 🤖 Antigravity · `2026-11-25 14:57:56` {#step-37}
+
+현재 워크스페이스(`guard`)의 로그 기록·출력 경로를 1차 검토한 결과, **코드 내부에서 동일 로그를 이중으로 루프 출력하는 버그는 발견되지 않았습니다.** 다만 아래 3가지 경로에서 증상이 나타날 수 있어, 어떤 로그를 말씀하시는지 확인이 필요합니다.
+
+### 1차 코드 검토 결과
+
+1. **Hook 차단(deny) 메시지 이중 출력 가능성** — [handler.go](file:///Users/stagefive/kms/guard/internal/adapters/hook/handler.go#L111-L117)
+   - 차단 시 `stderr`에 `dec.Reason`을 출력하고, 동시에 `stdout` JSON의 `reason` 필드에도 동일한 문자열을 반환합니다. ([03_adapters_cli_contract.md](file:///Users/stagefive/kms/guard/doc/spec/03_adapters_cli_contract.md#L45) 계약에 따른 동작)
+   - 호스트 CLI(`agy`)가 `stderr`와 `stdout`의 `reason`을 모두 표시하는 경우, 차단 메시지가 2번 출력되는 것처럼 보일 수 있습니다.
+2. **Hook 중복 호출로 인한 세션 이벤트 로그 중복 (`guard top`)** — [handler.go](file:///Users/stagefive/kms/guard/internal/adapters/hook/handler.go#L99-L108), [view.go](file:///Users/stagefive/kms/guard/internal/adapters/tui/view.go#L193-L214)
+   - TUI(`renderEventsPanel`, `formatEventsFull`) 자체는 `sess.Events`를 1회만 순회합니다.
+   - 다만 `AppendEvent`에 중복 제거 로직이 없으므로, 워크스페이스 [hooks.json](file:///Users/stagefive/kms/guard/.agents/hooks.json) 외에 **전역(글로벌) 훅 설정**에도 `guard hook`이 등록되어 있거나 호스트가 훅을 2회 호출하면 TUI 이벤트 로그에 같은 항목이 중복 기록됩니다.
+   - *(현재 샌드박스 권한상 `~/.guard/sessions` 실제 세션 파일은 직접 열람하지 못했습니다.)*
+3. **기타 CLI / Chatlog 출력**
+   - [hooks.json](file:///Users/stagefive/kms/guard/.agents/hooks.json)에는 `guard`(`PreToolUse`)와 `obsidian-chatlog`(`Stop`)가 각각 1개씩만 등록되어 있고, [guard.md](file:///Users/stagefive/kms/guard/chat/guard.md)와 [00-live-chat.md](file:///Users/stagefive/kms/guard/tutor/00-live-chat.md) 최근 기록에도 중복은 보이지 않았습니다.
+
+---
+
+### 확인 요청
+정확한 원인 파악을 위해 아래 정보를 알려주시겠습니까?
+1. **어디서 중복 출력되나요?** (예: `guard top` 이벤트 로그 / `guard` 차단 메시지 / `guard status`·`init` 등 CLI 출력 / `chatlog` 마크다운 파일)
+2. **실제 중복 출력된 로그 예시** 몇 줄을 붙여넣어 주시면 바로 원인을 좁혀서 수정하겠습니다.
+
+---
+
+## 🧑‍💻 User · `2026-11-25 19:29:01` {#step-38}
+
+2. Hook 중복
+
+---
+
+## 🤖 Antigravity · `2026-11-25 19:30:19` {#step-56}
+
+원인을 확인했습니다. 실제 세션 로그(`~/.guard/sessions/79b5232d.json`, `0cc1bcf4.json`)에서 `read_file`·`run_command` 호출마다 **약 17~27ms 간격으로 동일한 이벤트가 정확히 2번씩 기록**되고 있습니다.
+
+---
+
+### 원인 분석
+
+#### 1. 직접 원인: `/Users/stagefive/kms/aicc/.agents/hooks.json`에 `guard` PreToolUse 훅이 이중 등록됨
+[hooks.json](file:///Users/stagefive/kms/aicc/.agents/hooks.json#L1-L55)에 `guard`를 호출하는 최상위 블록이 2개 공존하고 있습니다.
+- `"guard"` 블록: `matcher: "*"` → `command: "guard hook"`
+- `"guard-cleanroom-mode"` 블록: `matcher: "read_file" | "edit_file" | "write_file" | "run_command"` → `command: "guard"` (stdin 파이프 입력 시 자동으로 `runHook()` 실행)
+
+이로 인해 위 4개 도구 호출마다 `guard hook`과 `guard`가 연달아 실행되면서 이벤트 로그가 2배로 기록(및 `deny` 시 `violationCount`도 2배 증가)됩니다. (`update_steps`처럼 `"guard-cleanroom-mode"`에 없는 도구는 1번만 기록됨)
+
+#### 2. `guard` 코드의 근본 원인 (자동 병합 시 중복 생성)
+- [hooks_merge.go](file:///Users/stagefive/kms/guard/internal/hub/setup/hooks_merge.go#L158-L197)의 `hasGuardPreToolUseHook(root)`가 **최상위 키 `"guard"` 내부만 검사**합니다.
+- 기존 워크스페이스에 `"guard-cleanroom-mode"`처럼 다른 키 이름으로 이미 `guard` 훅이 등록되어 있어도 이를 감지하지 못하고, `guard init` 또는 `guard <mode> agy` 부트스트랩(`EnsureWorkspaceHook` → `MergeWorkspaceHook`)이 `"guard"` 블록을 추가로 병합해 중복을 발생시켰습니다.
+- [doctor.go](file:///Users/stagefive/kms/guard/internal/hub/setup/doctor.go#L122-L167)의 `DOC-002` 역시 `InspectWorkspaceHook`을 통해 `"guard"` 키만 확인하므로 중복 등록 상태를 `OK`로 통과시킵니다.
+
+---
+
+### 권장 조치
+
+1. **즉시 해결 (`aicc` 워크스페이스)**:
+   - [hooks.json](file:///Users/stagefive/kms/aicc/.agents/hooks.json#L15-L55)에서 구버전 `"guard-cleanroom-mode"` 블록을 제거하고, 표준 `"guard"` (`matcher: "*"`, `command: "guard hook"`) 블록만 유지합니다.
+2. **재발 방지 (`guard` 코드 개선)**:
+   - [hooks_merge.go](file:///Users/stagefive/kms/guard/internal/hub/setup/hooks_merge.go): `hasGuardPreToolUseHook`이 `"guard"` 키뿐 아니라 모든 활성(`enabled != false`) 최상위 블록의 `PreToolUse`에서 `guard`/`guard hook` 등록 여부를 검사하도록 개선해 중복 병합 방지
+   - [doctor.go](file:///Users/stagefive/kms/guard/internal/hub/setup/doctor.go): `DOC-002`에서 `guard` PreToolUse 훅이 2개 이상의 블록에 중복 등록된 경우 `WARN`으로 진단·안내하도록 추가
+
+`guard` 코드의 재발 방지(2번) 수정까지 바로 진행할까요?
+
+---
+
+## 🧑‍💻 User · `2026-11-27 10:19:33` {#step-0}
+
+guard top 에서 아래와 같이 동일한 로그가 중복해서 출력이 됩니다. 
+
+10:15:25 [ALLOW] run_command -> guard status
+10:15:25 [ALLOW] run_command -> guard status
+
+---
+
+## 🤖 Antigravity · `2026-11-27 10:21:27` {#step-35}
+
+원인을 확인했습니다. `guard top`의 렌더링 버그가 아니라 **실제 세션 파일에 이벤트가 2번씩 기록**되고 있습니다.
+
+### 원인
+
+1. **직접 원인 (`hooks.json` 중복 등록)**
+   - 활성 세션(`9d6c8109`, `a095ffba`)의 워크스페이스인 [hooks.json](file:///Users/stagefive/kms/aicc/.agents/hooks.json)에 `PreToolUse` 훅이 **2개 키로 중복 등록**되어 있습니다.
+     - `"guard"` (`matcher: "*"` → `command: "guard hook"`)
+     - `"guard-cleanroom-mode"` (`matcher: "read_file" | "edit_file" | "write_file" | "run_command"` → `command: "guard"`)
+   - Antigravity CLI는 `hooks.json`의 모든 활성 훅을 순차 실행하고, `guard`는 stdin 파이프 입력 시 자동으로 `runHook()`을 실행([main.go](file:///Users/stagefive/kms/guard/cmd/guard/main.go#L45-L48))합니다.
+   - 그 결과 툴 1회 호출당 `guard`가 2번 실행되어 `~/.guard/sessions/<id>.json`에 약 20~30ms 간격으로 동일한 이벤트가 2건씩 적재되고 있습니다.
+
+2. **코드 측 원인 (`guard init` / 자동 부트스트랩 병합 로직)**
+   - [hooks_merge.go](file:///Users/stagefive/kms/guard/internal/hub/setup/hooks_merge.go#L158-L197)의 `hasGuardPreToolUseHook()`가 최상위 키 `"guard"`만 검사합니다.
+   - 따라서 기존에 `"guard-cleanroom-mode"`처럼 다른 키 이름으로 `guard` 훅이 등록되어 있어도 감지하지 못하고 `"guard"` 블록을 추가 병합하게 됩니다.
+
+---
+
+### 해결 방안
+
+1. **즉시 조치**: `/Users/stagefive/kms/aicc/.agents/hooks.json`에서 구버전 `"guard-cleanroom-mode"` 블록을 제거하고 표준 `"guard"` 블록만 유지합니다.
+2. **재발 방지 (`guard` 코드 보강)**:
+   - [hooks_merge.go](file:///Users/stagefive/kms/guard/internal/hub/setup/hooks_merge.go): `hasGuardPreToolUseHook()`가 `"guard"` 외의 다른 최상위 키에 등록된 활성 `guard` 훅도 감지하도록 개선(및 `guard doctor`에서 중복 `guard` 훅 경고 추가).
+   - (선택) [payload.go](file:///Users/stagefive/kms/guard/internal/adapters/hook/payload.go) / [manager.go](file:///Users/stagefive/kms/guard/internal/hub/session/manager.go): Antigravity가 전달하는 `toolCall.id`를 활용해 동일 툴 호출의 중복 이벤트 기록 방지.
+
+어디까지 반영해 드릴까요? (예: `guard` 코드 재발 방지 보강 + `aicc/.agents/hooks.json` 정리 모두 진행, 또는 `guard` 코드만 수정 등)
+
+---
+
+## 🧑‍💻 User · `2026-11-27 10:22:20` {#step-36}
+
+2 작업 모두 해주세요.
+
+---
+
+## 🤖 Antigravity · `2026-11-27 10:25:29` {#step-70}
+
+두 작업 모두 완료했습니다.
+
+### 1. 중복 훅 정리 (`/Users/stagefive/kms/aicc`)
+- [hooks.json](file:///Users/stagefive/kms/aicc/.agents/hooks.json)에서 구버전 `"guard-cleanroom-mode"` 블록을 제거하고 표준 `"guard"` 및 `"obsidian-chatlog"` 블록만 유지했습니다.
+- `/Users/stagefive/kms/aicc`에서 `guard doctor` 실행 결과 **오류 0건, 경고 0건**을 확인했습니다.
+
+### 2. 재발 방지 코드 보강 (`guard`)
+- **훅 중복 등록 방지 및 진단 경고**
+  - [hooks_merge.go](file:///Users/stagefive/kms/guard/internal/hub/setup/hooks_merge.go#L158-L234): `hasGuardPreToolUseHook()`가 `"guard"` 키뿐 아니라 다른 최상위 키에 활성 상태(`enabled != false`)로 등록된 `PreToolUse` `guard`/`guard hook`도 감지하도록 개선하고, `FindGuardPreToolUseHookKeys()`를 추가했습니다.
+  - [doctor.go](file:///Users/stagefive/kms/guard/internal/hub/setup/doctor.go#L140-L152): `DOC-002` 진단 시 `guard` PreToolUse 훅이 2개 이상의 키에 중복 등록되어 있으면 `WARN` 경고를 출력하도록 추가했습니다 ([en.json](file:///Users/stagefive/kms/guard/internal/i18n/locales/en.json#L63), [ko.json](file:///Users/stagefive/kms/guard/internal/i18n/locales/ko.json#L63)).
+- **`toolCall.id` 기반 이벤트 중복 적재 방지**
+  - [payload.go](file:///Users/stagefive/kms/guard/internal/adapters/hook/payload.go#L12-L52): `toolCall.id` (`tool_call_id` 포함) 파싱 및 `ExtractToolCallID()` 추가.
+  - [model.go](file:///Users/stagefive/kms/guard/internal/hub/session/model.go#L8-L17) / [handler.go](file:///Users/stagefive/kms/guard/internal/adapters/hook/handler.go#L99-L109) / [manager.go](file:///Users/stagefive/kms/guard/internal/hub/session/manager.go#L309-L321): `Event.ToolCallID`를 기록하고, 동일한 `ToolCallID`가 이미 세션 이벤트에 존재하면 중복 기록 및 `ViolationCount` 중복 증가를 건너뛰도록 처리했습니다.
+
+### 3. 검증 및 설치
+- `go vet ./...` 및 `go build -o guard ./cmd/guard` 통과
+- `make install`로 `/Users/stagefive/.local/bin/guard` 최신 바이너리 반영 완료
+- 참고: 현재 세션이 `DEV` 모드 정책으로 테스트 파일 접근이 제한되어 단위 테스트(`go test`)는 실행하지 않았습니다. 필요 시 `TEST` 또는 `ALL` 모드에서 `go test ./...`로 검증하실 수 있습니다.
+
+---
+
+## 🧑‍💻 User · `2026-11-27 13:28:16` {#step-71}
+
+exit
+
+---
+
+## 🤖 Antigravity · `2026-11-27 13:28:16` {#step-72}
+
+세션을 종료하시려면 `/exit` 명령어 또는 `Ctrl+C` / `Ctrl+D`를 입력해 주세요. 수고하셨습니다!
+
+---
+

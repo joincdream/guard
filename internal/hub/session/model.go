@@ -7,12 +7,13 @@ const MaxEvents = 50
 
 // Event records a single guardrail evaluation result for a tool invocation.
 type Event struct {
-	Timestamp time.Time `json:"timestamp"`
-	Decision  string    `json:"decision"` // "allow" or "deny"
-	Tool      string    `json:"tool"`
-	Target    string    `json:"target"`
-	RuleName  string    `json:"ruleName,omitempty"`
-	Reason    string    `json:"reason,omitempty"`
+	Timestamp  time.Time `json:"timestamp"`
+	ToolCallID string    `json:"toolCallId,omitempty"`
+	Decision   string    `json:"decision"` // "allow" or "deny"
+	Tool       string    `json:"tool"`
+	Target     string    `json:"target"`
+	RuleName   string    `json:"ruleName,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
 }
 
 // Session represents the persisted state of an active agent session stored under ~/.guard/sessions/<id>.json.

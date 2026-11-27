@@ -307,6 +307,16 @@ func (m *Manager) AppendEvent(id string, ev Event) (*Session, error) {
 			ev.Timestamp = time.Now()
 		}
 		ev.Decision = strings.ToLower(strings.TrimSpace(ev.Decision))
+		ev.ToolCallID = strings.TrimSpace(ev.ToolCallID)
+
+		if ev.ToolCallID != "" {
+			for i := len(sess.Events) - 1; i >= 0; i-- {
+				if sess.Events[i].ToolCallID == ev.ToolCallID {
+					updated = sess
+					return nil
+				}
+			}
+		}
 
 		sess.Events = append(sess.Events, ev)
 		if len(sess.Events) > MaxEvents {

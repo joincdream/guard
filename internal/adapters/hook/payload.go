@@ -10,9 +10,11 @@ type Input struct {
 	CWD            string   `json:"cwd"`
 	WorkspacePaths []string `json:"workspacePaths"`
 	ToolCall       struct {
+		ID   string                 `json:"id"`
 		Name string                 `json:"name"`
 		Args map[string]interface{} `json:"args"`
 	} `json:"toolCall"`
+	ToolCallID  string                 `json:"tool_call_id"`
 	ToolName    string                 `json:"tool_name"`
 	ToolArgs    map[string]interface{} `json:"tool_args"`
 	ToolInput   map[string]interface{} `json:"tool_input"`
@@ -31,6 +33,16 @@ type Output struct {
 // ExtractSessionID returns the first non-empty session identifier from the payload.
 func (in *Input) ExtractSessionID() string {
 	for _, v := range []string{in.SessionID, in.SessionIDSnake, in.ConversationID} {
+		if s := strings.TrimSpace(v); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// ExtractToolCallID returns the unique tool invocation identifier from the payload if present.
+func (in *Input) ExtractToolCallID() string {
+	for _, v := range []string{in.ToolCall.ID, in.ToolCallID} {
 		if s := strings.TrimSpace(v); s != "" {
 			return s
 		}

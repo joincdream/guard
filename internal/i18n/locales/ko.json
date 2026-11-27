@@ -60,6 +60,7 @@
   "cli.doctor.msg.doc002_inspect_err": ".agents/hooks.json 검사 실패: %v",
   "cli.doctor.msg.doc002_invalid_json": ".agents/hooks.json의 JSON 문법이 손상되었습니다 (데이터 보호를 위해 수동 수정 필요)",
   "cli.doctor.msg.doc002_ok": "PreToolUse 'guard hook' 등록됨",
+  "cli.doctor.msg.doc002_duplicate": "PreToolUse guard 훅이 중복 등록되어 있습니다 (%s). 중복 실행을 방지하려면 하나만 남기세요",
   "cli.doctor.msg.doc002_fix_err": "guard hook 등록 실패: %v",
   "cli.doctor.msg.doc002_fixed": ".agents/hooks.json에 PreToolUse 'guard hook' 등록 완료",
   "cli.doctor.msg.doc002_missing": ".agents/hooks.json 파일이 없습니다 ('guard init' 또는 'guard doctor --fix' 실행)",

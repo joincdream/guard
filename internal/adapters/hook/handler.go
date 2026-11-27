@@ -97,12 +97,13 @@ func (h *Handler) Handle(r io.Reader) error {
 			decisionStr = "deny"
 		}
 		if _, err := h.sessionMgr.AppendEvent(sessionID, session.Event{
-			Timestamp: time.Now(),
-			Decision:  decisionStr,
-			Tool:      toolName,
-			Target:    target,
-			RuleName:  dec.RuleName,
-			Reason:    dec.Reason,
+			Timestamp:  time.Now(),
+			ToolCallID: input.ExtractToolCallID(),
+			Decision:   decisionStr,
+			Tool:       toolName,
+			Target:     target,
+			RuleName:   dec.RuleName,
+			Reason:     dec.Reason,
 		}); err != nil {
 			h.debugf("append session event failed (%s): %v", sessionID, err)
 		}

@@ -60,6 +60,7 @@
   "cli.doctor.msg.doc002_inspect_err": "failed to inspect .agents/hooks.json: %v",
   "cli.doctor.msg.doc002_invalid_json": ".agents/hooks.json contains invalid JSON (manual fix required to avoid data loss)",
   "cli.doctor.msg.doc002_ok": "PreToolUse 'guard hook' is registered",
+  "cli.doctor.msg.doc002_duplicate": "duplicate PreToolUse guard hooks registered (%s); keep only one entry to prevent duplicate execution",
   "cli.doctor.msg.doc002_fix_err": "failed to register guard hook: %v",
   "cli.doctor.msg.doc002_fixed": "registered PreToolUse 'guard hook' in .agents/hooks.json",
   "cli.doctor.msg.doc002_missing": ".agents/hooks.json is missing (run 'guard init' or 'guard doctor --fix')",

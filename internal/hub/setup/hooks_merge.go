@@ -155,16 +155,59 @@ func MergeWorkspaceHook(workspaceRoot string, dryRun bool) (HookMergeResult, err
 	return res, nil
 }
 
+// FindGuardPreToolUseHookKeys inspects <workspaceRoot>/.agents/hooks.json and returns
+// the sorted list of enabled top-level hook keys that register a PreToolUse guard command.
+func FindGuardPreToolUseHookKeys(workspaceRoot string) ([]string, error) {
+	if strings.TrimSpace(workspaceRoot) == "" {
+		return nil, errors.New("workspace root is required")
+	}
+	hookPath := filepath.Join(workspaceRoot, ".agents", "hooks.json")
+	data, readErr := os.ReadFile(hookPath)
+	if readErr != nil {
+		if errors.Is(readErr, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, readErr
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil, nil
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil || root == nil {
+		return nil, nil
+	}
+	return findGuardPreToolUseHookKeys(root), nil
+}
+
 func hasGuardPreToolUseHook(root map[string]any) bool {
-	rawGuard, exists := root["guard"]
-	if !exists || rawGuard == nil {
+	return len(findGuardPreToolUseHookKeys(root)) > 0
+}
+
+func findGuardPreToolUseHookKeys(root map[string]any) []string {
+	var keys []string
+	for k, rawBlock := range root {
+		if blockHasGuardPreToolUseHook(rawBlock) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func blockHasGuardPreToolUseHook(rawBlock any) bool {
+	if rawBlock == nil {
 		return false
 	}
-	guardMap, ok := rawGuard.(map[string]any)
+	blockMap, ok := rawBlock.(map[string]any)
 	if !ok {
 		return false
 	}
-	rawPre, exists := guardMap["PreToolUse"]
+	if enabled, exists := blockMap["enabled"]; exists {
+		if enabledBool, ok := enabled.(bool); ok && !enabledBool {
+			return false
+		}
+	}
+	rawPre, exists := blockMap["PreToolUse"]
 	if !exists || rawPre == nil {
 		return false
 	}
@@ -187,13 +230,20 @@ func hasGuardPreToolUseHook(root map[string]any) bool {
 				continue
 			}
 			cmd, _ := hMap["command"].(string)
-			cmd = strings.TrimSpace(cmd)
-			if cmd == "guard hook" || cmd == "guard" || strings.HasSuffix(cmd, "/guard hook") {
+			if isGuardHookCommand(cmd) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func isGuardHookCommand(cmd string) bool {
+	cmd = strings.TrimSpace(cmd)
+	return cmd == "guard hook" ||
+		cmd == "guard" ||
+		strings.HasSuffix(cmd, "/guard hook") ||
+		strings.HasSuffix(cmd, "/guard")
 }
 
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
