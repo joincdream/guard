@@ -7,7 +7,9 @@ import (
 	"os"
 	"strings"
 
+	"guard/internal/core"
 	"guard/internal/hub/handoff"
+	"guard/internal/hub/policy"
 	"guard/internal/hub/session"
 	"guard/internal/i18n"
 )
@@ -28,6 +30,11 @@ func (m *multiStringFlag) Set(val string) error {
 	return nil
 }
 
+func (a *cliApp) knownModes() []string {
+	polRes := policy.LoadDetailed(a.workspaceRoot)
+	return core.ExtractModes(polRes.Policy)
+}
+
 func (a *cliApp) ensureHandoffManager() (*handoff.Manager, error) {
 	if a.handoffMgr != nil {
 		return a.handoffMgr, nil
@@ -36,6 +43,7 @@ func (a *cliApp) ensureHandoffManager() (*handoff.Manager, error) {
 	if err != nil {
 		return nil, err
 	}
+	mgr.SetKnownModes(a.knownModes())
 	a.handoffMgr = mgr
 	return mgr, nil
 }
@@ -103,7 +111,8 @@ func (a *cliApp) runHandoffSend(args []string) int {
 		}
 	}
 
-	toNode, err := handoff.ParseTarget(toRaw)
+	knownModes := a.knownModes()
+	toNode, err := handoff.ParseTargetWithModes(toRaw, knownModes)
 	if err != nil {
 		fmt.Fprintf(a.stderr, "error: %v\n", err)
 		return 1
@@ -115,7 +124,7 @@ func (a *cliApp) runHandoffSend(args []string) int {
 		return 1
 	}
 
-	fromNode := a.resolveSenderNode()
+	fromNode := a.resolveSenderNode(knownModes)
 	item := handoff.HandoffItem{
 		ParentID:   strings.TrimSpace(parentID),
 		Type:       handoff.HandoffType(strings.ToLower(strings.TrimSpace(typeRaw))),
@@ -319,14 +328,14 @@ func (a *cliApp) runHandoffAck(args []string) int {
 	return 0
 }
 
-func (a *cliApp) resolveSenderNode() handoff.HandoffNode {
+func (a *cliApp) resolveSenderNode(knownModes []string) handoff.HandoffNode {
 	var node handoff.HandoffNode
 	for _, envKey := range []string{"GUARD_SESSION_ID", "SESSION_ID", "CONVERSATION_ID"} {
 		if sid := strings.TrimSpace(os.Getenv(envKey)); sid != "" && handoff.ValidSafeID(sid) {
 			node.SessionID = sid
 			if sess, err := a.sessMgr.Get(sid); err == nil && sess != nil {
 				m := strings.ToLower(strings.TrimSpace(sess.Mode))
-				if handoff.ValidAgentMode(m) {
+				if handoff.IsKnownMode(m, knownModes) {
 					node.Mode = m
 				}
 			}
@@ -335,7 +344,7 @@ func (a *cliApp) resolveSenderNode() handoff.HandoffNode {
 	}
 	if node.Mode == "" {
 		m := strings.ToLower(strings.TrimSpace(os.Getenv("AGENT_MODE")))
-		if handoff.ValidAgentMode(m) {
+		if handoff.IsKnownMode(m, knownModes) {
 			node.Mode = m
 		}
 	}

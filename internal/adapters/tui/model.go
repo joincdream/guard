@@ -58,11 +58,13 @@ type Model struct {
 	showHelp  bool
 	viewport  viewport.Model
 
-	handoffs         []handoff.HandoffItem
-	activeHandoff    *handoff.HandoffItem
-	handoffMode      handoffViewMode
-	showHandoffQueue bool
-	refViewerTitle   string
+	handoffs          []handoff.HandoffItem
+	activeHandoff     *handoff.HandoffItem
+	handoffMode       handoffViewMode
+	showHandoffQueue  bool
+	refViewerTitle    string
+	refIndex          int
+	dismissedHandoffs map[string]bool
 }
 
 type tickMsg time.Time
@@ -84,13 +86,14 @@ func NewModelWithHandoff(sessMgr *session.Manager, handoffMgr *handoff.Manager, 
 	}
 	vp := viewport.New(80, 20)
 	m := Model{
-		sessMgr:       sessMgr,
-		handoffMgr:    handoffMgr,
-		workspaceRoot: workspaceRoot,
-		width:         100,
-		height:        30,
-		now:           time.Now(),
-		viewport:      vp,
+		sessMgr:           sessMgr,
+		handoffMgr:        handoffMgr,
+		workspaceRoot:     workspaceRoot,
+		width:             100,
+		height:            30,
+		now:               time.Now(),
+		viewport:          vp,
+		dismissedHandoffs: make(map[string]bool),
 	}
 	m.reloadSessions()
 	m.reloadHandoffs()
@@ -159,10 +162,10 @@ func (m *Model) reloadHandoffs() {
 	}
 	m.handoffs = items
 
-	// Find the oldest pending ticket waiting for human approval.
+	// Find the oldest pending ticket waiting for human approval (excluding dismissed ones).
 	var nextPending *handoff.HandoffItem
 	for i := range items {
-		if items[i].Status == handoff.StatusPending {
+		if items[i].Status == handoff.StatusPending && !m.dismissedHandoffs[items[i].ID] {
 			cp := items[i]
 			nextPending = &cp
 			break

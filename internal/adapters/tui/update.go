@@ -7,6 +7,7 @@ import (
 
 	"guard/internal/core"
 	"guard/internal/hub/handoff"
+	"guard/internal/hub/policy"
 	"guard/internal/hub/session"
 	"guard/internal/i18n"
 )
@@ -67,8 +68,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Handoff reference viewer overlay takes precedence while active
 	if m.handoffMode == handoffViewRefViewer {
-		if key == "esc" || key == "v" || key == "V" {
+		switch key {
+		case "esc", "v", "V":
 			m.handoffMode = handoffViewSummary
+			return m, nil
+		case "tab", "right", "l":
+			m.switchActiveHandoffRef(1)
+			return m, nil
+		case "shift+tab", "left", "h":
+			m.switchActiveHandoffRef(-1)
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -85,8 +93,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "v", "V":
 			m.openActiveHandoffRef()
 			return m, nil
-		case "esc":
+		case "x", "X", "c", "C":
 			m.rejectActiveHandoff()
+			return m, nil
+		case "esc":
+			m.dismissActiveHandoff()
 			return m, nil
 		}
 		return m, nil
@@ -147,6 +158,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "a", "A":
 		m.switchSelectedMode(core.ModeAll)
 
+	case "m", "M":
+		m.cycleSelectedMode()
+
 	case "c", "C":
 		m.resetSelectedViolations()
 
@@ -199,6 +213,17 @@ func (m *Model) rejectActiveHandoff() {
 	m.setToast(i18n.T("tui.handoff.toast.rejected", id), false)
 }
 
+func (m *Model) dismissActiveHandoff() {
+	if m.activeHandoff != nil {
+		if m.dismissedHandoffs == nil {
+			m.dismissedHandoffs = make(map[string]bool)
+		}
+		m.dismissedHandoffs[m.activeHandoff.ID] = true
+	}
+	m.handoffMode = handoffViewNone
+	m.activeHandoff = nil
+}
+
 func (m *Model) openActiveHandoffRef() {
 	if m.activeHandoff == nil {
 		return
@@ -207,13 +232,30 @@ func (m *Model) openActiveHandoffRef() {
 		m.setToast(i18n.T("tui.handoff.toast.no_refs"), true)
 		return
 	}
-	ref := m.activeHandoff.References[0]
+	m.loadActiveHandoffRef(0)
+}
+
+func (m *Model) switchActiveHandoffRef(delta int) {
+	if m.activeHandoff == nil || len(m.activeHandoff.References) <= 1 {
+		return
+	}
+	n := len(m.activeHandoff.References)
+	next := (m.refIndex + delta + n) % n
+	m.loadActiveHandoffRef(next)
+}
+
+func (m *Model) loadActiveHandoffRef(idx int) {
+	if m.activeHandoff == nil || idx < 0 || idx >= len(m.activeHandoff.References) {
+		return
+	}
+	ref := m.activeHandoff.References[idx]
 	content, err := loadReferenceContent(m.workspaceRoot, ref)
 	if err != nil {
 		m.setToast(i18n.T("tui.handoff.toast.ref_open_failed", ref, err), true)
 		return
 	}
 	m.syncViewportSize()
+	m.refIndex = idx
 	m.refViewerTitle = ref
 	m.viewport.SetContent(content)
 	m.viewport.GotoTop()
@@ -232,6 +274,28 @@ func (m *Model) switchSelectedMode(mode string) {
 	}
 	m.reloadSessions()
 	m.setToast(i18n.T("tui.toast.mode_changed", session.ShortID(sess.ID), mode), false)
+}
+
+func (m *Model) cycleSelectedMode() {
+	sess := m.selectedSession()
+	if sess == nil {
+		m.setToast(i18n.T("tui.toast.no_session_for_mode"), true)
+		return
+	}
+	polRes := policy.LoadDetailed(m.workspaceRoot)
+	modes := core.ExtractModes(polRes.Policy)
+	if len(modes) == 0 {
+		return
+	}
+	current := core.NormalizeMode(sess.Mode)
+	nextIdx := 0
+	for i, mode := range modes {
+		if mode == current {
+			nextIdx = (i + 1) % len(modes)
+			break
+		}
+	}
+	m.switchSelectedMode(modes[nextIdx])
 }
 
 func (m *Model) resetSelectedViolations() {

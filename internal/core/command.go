@@ -1003,10 +1003,34 @@ func isOutputRedirectionOp(tok string) bool {
 	return tok == ">" || tok == ">>" || tok == "1>" || tok == "1>>" || tok == "2>" || tok == "2>>" || tok == "&>" || tok == "&>>"
 }
 
+// isBenignOutputTarget reports whether a redirection target does not write to a filesystem path
+// (e.g. /dev/null or file descriptor duplication/close like &1, &2, &-).
+func isBenignOutputTarget(target string) bool {
+	if target == "/dev/null" {
+		return true
+	}
+	if !strings.HasPrefix(target, "&") || len(target) < 2 {
+		return false
+	}
+	rest := target[1:]
+	if rest == "-" {
+		return true
+	}
+	for i := 0; i < len(rest); i++ {
+		if rest[i] < '0' || rest[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func hasOutputRedirection(tokens []string) bool {
-	for _, tok := range tokens {
-		if isOutputRedirectionOp(tok) {
-			return true
+	for i := 0; i < len(tokens); i++ {
+		if isOutputRedirectionOp(tokens[i]) {
+			if i+1 >= len(tokens) || !isBenignOutputTarget(tokens[i+1]) {
+				return true
+			}
+			i++
 		}
 	}
 	return false
@@ -1016,7 +1040,9 @@ func extractOutputRedirectionTargets(tokens []string) []string {
 	var targets []string
 	for i := 0; i < len(tokens); i++ {
 		if isOutputRedirectionOp(tokens[i]) && i+1 < len(tokens) {
-			targets = append(targets, tokens[i+1])
+			if !isBenignOutputTarget(tokens[i+1]) {
+				targets = append(targets, tokens[i+1])
+			}
 			i++
 		}
 	}

@@ -29,6 +29,12 @@ type Manager struct {
 	sessionDir string
 	maxItems   int
 	now        func() time.Time
+	knownModes []string
+}
+
+// SetKnownModes configures additional policy-defined agent modes accepted during validation.
+func (m *Manager) SetKnownModes(modes []string) {
+	m.knownModes = append([]string(nil), modes...)
 }
 
 // DefaultHandoffDir returns ~/.guard/handoff.
@@ -229,7 +235,7 @@ func (m *Manager) Enqueue(item HandoffItem) (HandoffItem, error) {
 	item.CreatedAt = now
 	item.UpdatedAt = now
 
-	if err := item.Validate(); err != nil {
+	if err := item.ValidateWithModes(m.knownModes); err != nil {
 		return HandoffItem{}, err
 	}
 

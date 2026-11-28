@@ -105,12 +105,12 @@ func TestHandoffTUI01_ModalAndPanelToggle(t *testing.T) {
 		t.Fatalf("expected ticketA status %q after [Enter], got %q", handoff.StatusApproved, gotA.Status)
 	}
 
-	// 3. pending 티켓 B 생성 -> 갱신 -> [Esc] 반려
+	// 3. pending 티켓 B 생성 -> 갱신 -> [Esc] 보류(pending 유지) 후 [X] 반려
 	ticketB, err := handoffMgr.Enqueue(handoff.HandoffItem{
 		Type:    handoff.TypeReview,
 		From:    handoff.HandoffNode{Mode: handoff.ModeDev},
 		To:      handoff.HandoffNode{Mode: handoff.ModePlan},
-		Summary: "TUI Esc 반려 테스트",
+		Summary: "TUI Esc 보류 및 X 반려 테스트",
 	})
 	if err != nil {
 		t.Fatalf("Enqueue ticketB failed: %v", err)
@@ -127,8 +127,28 @@ func TestHandoffTUI01_ModalAndPanelToggle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get(ticketB) failed: %v", err)
 	}
-	if gotB.Status != handoff.StatusRejected {
-		t.Fatalf("expected ticketB status %q after [Esc], got %q", handoff.StatusRejected, gotB.Status)
+	if gotB.Status != handoff.StatusPending {
+		t.Fatalf("expected ticketB status %q after [Esc] dismiss, got %q", handoff.StatusPending, gotB.Status)
+	}
+
+	// [Esc]로 보류된 후 [H] 또는 신규 티켓으로 모달 진입 대신, 새 티켓 C 생성 후 [X] 반려 검증
+	ticketC, err := handoffMgr.Enqueue(handoff.HandoffItem{
+		Type:    handoff.TypeReview,
+		From:    handoff.HandoffNode{Mode: handoff.ModeDev},
+		To:      handoff.HandoffNode{Mode: handoff.ModePlan},
+		Summary: "TUI X 반려 테스트",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue ticketC failed: %v", err)
+	}
+	m = refreshTUIModel(m)
+	m = sendRuneKey(m, 'x')
+	gotC, err := handoffMgr.Get(ticketC.ID)
+	if err != nil {
+		t.Fatalf("Get(ticketC) failed: %v", err)
+	}
+	if gotC.Status != handoff.StatusRejected {
+		t.Fatalf("expected ticketC status %q after [X], got %q", handoff.StatusRejected, gotC.Status)
 	}
 }
 

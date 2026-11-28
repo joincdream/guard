@@ -15,6 +15,21 @@ rules:
       - "**/000/**"
     message: "[POLICY VIOLATION] 당신은 테스트 파일(*_test.go 등)에 접근할 권한이 없습니다. 어떤 우회 시도(Python 스크립트 작성, 와일드카드 덤프, 셸 명령어 조작 등)도 엄격히 금지됩니다. 접근 시도를 즉시 중단하고, 요구사항 명세서만을 참조하여 개발 및 컴파일 검증(go build, go vet)을 완료하십시오."
 
+  # 1-1. DEV 모드 (Cleanroom): 테스트 파일 쓰기/수정 차단
+  - name: "guard-test-files-write"
+    mode: "DEV"
+    type: "write"
+    patterns:
+      - "*_test.go"
+      - "*.test.ts"
+      - "*.test.js"
+      - "*.spec.ts"
+      - "*.spec.js"
+      - "**/testutil/**"
+      - "**/tests/**"
+      - "**/000/**"
+    message: "[POLICY VIOLATION] DEV 모드에서는 테스트 파일(*_test.go 등)을 생성하거나 수정할 수 없습니다. 프로덕션 코드만 작성하고 테스트 작성·수정은 TEST 모드로 핸드오프하십시오."
+
   # 1-2. DEV 모드 (Cleanroom): 테스트 명령어 실행 차단 (출력 기반 땜빵 코드 방지)
   - name: "guard-test-command-exec"
     mode: "DEV"
@@ -35,7 +50,7 @@ rules:
       - "src/docker/**"
     message: "[POLICY VIOLATION] 설계(PLAN) 모드에서는 소스 코드 및 인프라 파일(src/internal, src/cmd, src/web, src/docker)을 수정할 수 없습니다. 작업 계획서 및 문서 파일만 작성하십시오."
 
-  # 3. TEST 모드: doc/ 디렉토리 및 테스트 파일(*_test.go) 외 모든 파일 접근(읽기/쓰기) 차단
+  # 3. TEST 모드: doc/, test/ 디렉토리 및 테스트 파일(*_test.go) 외 모든 파일 접근(읽기/쓰기) 차단
   - name: "guard-test-mode-read"
     mode: "TEST"
     type: "read"
@@ -43,8 +58,9 @@ rules:
       - "**"
     exclude_patterns:
       - "doc/**"
+      - "test/**"
       - "*_test.go"
-    message: "[POLICY VIOLATION] TEST 모드에서는 doc/ 디렉토리와 테스트 파일(*_test.go)만 열람할 수 있습니다. 다른 파일에는 접근할 수 없습니다."
+    message: "[POLICY VIOLATION] TEST 모드에서는 doc/, test/ 디렉토리와 테스트 파일(*_test.go)만 열람할 수 있습니다. 다른 파일에는 접근할 수 없습니다."
 
   - name: "guard-test-mode-write"
     mode: "TEST"
@@ -53,5 +69,22 @@ rules:
       - "**"
     exclude_patterns:
       - "doc/**"
+      - "test/**"
       - "*_test.go"
-    message: "[POLICY VIOLATION] TEST 모드에서는 doc/ 디렉토리와 테스트 파일(*_test.go)만 수정할 수 있습니다. 다른 파일에는 접근할 수 없습니다."
+    message: "[POLICY VIOLATION] TEST 모드에서는 doc/, test/ 디렉토리와 테스트 파일(*_test.go)만 수정할 수 있습니다. 다른 파일에는 접근할 수 없습니다."
+
+  # 3-1. TEST 모드: 셸 명령어를 통한 프로덕션 코드 열람 우회 차단
+  - name: "guard-test-mode-command"
+    mode: "TEST"
+    type: "command"
+    patterns:
+      - "git diff"
+      - "git show"
+      - "git log *-p*"
+      - "git log *--patch*"
+      - "git log *-u*"
+      - "rg"
+      - "grep"
+      - "awk"
+      - "sed"
+    message: "[POLICY VIOLATION] TEST 모드에서는 프로덕션 코드 열람에 악용될 수 있는 명령어(git diff/show, rg, grep, awk, sed 등)를 실행할 수 없습니다. doc/, test/ 및 테스트 파일(*_test.go)만 참조하여 테스트를 작성·실행하십시오."

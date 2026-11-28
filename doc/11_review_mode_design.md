@@ -81,12 +81,73 @@ flowchart LR
 | **`DEV`** | 허용 | **차단** | 테스트 경로 차단 | 허용 | **차단** | 허용 |
 | **`REVIEW`** | **허용** | **허용** | **허용** | **차단** | **차단** | 리포트 경로만 선택 허용 |
 | **`ALL`** | 허용 | 허용 | 허용 | 허용 | 허용 | 허용 |
+| **`Custom`** | *정책 정의에 따름* | *정책 정의에 따름* | *정책 정의에 따름* | *정책 정의에 따름* | *정책 정의에 따름* | *정책 정의에 따름* |
 
 ---
 
-## 4. 정책 및 훅 설계 (`guard-policy.yaml` & `internal/core`)
+## 4. 사용자 정의 모드 (Custom Modes) 확장 아키텍처
 
-### 4.1 `guard-policy.yaml` 기본 정책 (스택 프리셋 공통)
+Guard는 **4대 기본 모드(`PLAN`, `TEST`, `DEV`, `REVIEW`)를 디폴트로 내장**하되, 현업 팀의 개발 프로세스에 맞춰 사용자가 임의의 모드(예: `DOC`, `SECURITY`, `AUDIT`, `OPS`, `MIGRATE` 등)를 자유롭게 정의하고 확장할 수 있는 오픈 아키텍처를 제공합니다.
+
+### 4.1 기본 모드 vs 커스텀 모드 공존 모델
+
+- **기본 모드 (Built-in Modes)**:
+  - `PLAN`, `DEV`, `TEST`, `REVIEW` (및 우회 모드 `ALL`).
+  - `guard init` 시 표준 프리셋 룰과 템플릿(`.agents/rules/guard-*.md`), CLI 단축 런처(`guard dev`, `guard test`, `guard plan`, `guard review`)가 Zero-Config로 제공됩니다.
+- **사용자 정의 모드 (Custom Modes)**:
+  - `guard-policy.yaml`에 모드 정의 및 규칙을 자유롭게 추가하여 활성화합니다.
+  - 가드레일 평가 엔진([matcher.go](file:///mnt/data/mytask/kms/guard/internal/core/matcher.go#L80-L82))은 이미 대소문자 무시 동적 모드 매칭을 지원하므로, 정책에 룰이 추가되는 즉시 해당 모드가 동작합니다.
+  - CLI에서는 `guard run <custom-mode> <cmd...>` 또는 동적 디스패치(`guard <custom-mode> <cmd...>`)로 기동합니다.
+
+### 4.2 `guard-policy.yaml` 모드 메타데이터 스키마 확장
+
+프로젝트 정책 파일에 `modes` 선언 섹션을 두어, 모드별 설명과 Handoff `Scope Lock` 적용 여부를 명시할 수 있습니다. (생략 시 기본 4개 모드 자동 적용)
+
+```yaml
+version: "1"
+
+# [확장] 프로젝트 맞춤형 모드 정의
+modes:
+  - name: "SECURITY"
+    description: "취약점 분석 및 의존성 보안 감사 전용 세션"
+    scope_lock: false # handoff targets를 쓰기 제한으로 쓸지 여부 (false: 읽기 참조용)
+  - name: "DOC"
+    description: "스펙 및 기술 문서 작성 전용 세션"
+    scope_lock: true  # handoff targets(지정된 문서) 외에는 쓰기 차단
+
+rules:
+  # 기본 모드 룰들...
+
+  # 커스텀 SECURITY 모드: 소스 코드 수정 전면 차단 (Read-Only)
+  - name: "guard-security-write-block"
+    mode: "SECURITY"
+    type: "write"
+    patterns: ["**"]
+    exclude_patterns: ["doc/security/**"]
+    message: "[POLICY VIOLATION] SECURITY 모드는 소스코드 및 설정을 수정할 수 없습니다. 취약점 리포트 작성(doc/security/**)만 허용됩니다."
+
+  # 커스텀 DOC 모드: doc/ 및 markdown 문서 외 수정 차단
+  - name: "guard-doc-write-block"
+    mode: "DOC"
+    type: "write"
+    patterns: ["**"]
+    exclude_patterns: ["doc/**", "*.md"]
+    message: "[POLICY VIOLATION] DOC 모드는 문서(doc/**, *.md)만 작성/수정할 수 있습니다."
+```
+
+### 4.3 동적 Handoff 라우팅 및 Scope Lock 통합
+
+1. **동적 대상 모드 검증 (`ParseTarget`, `ValidAgentMode`)**:
+   - 기존의 하드코딩된 모드 검사(`plan`, `dev`, `test`, `all`)를 탈피하고, **`기본 모드 4종 + guard-policy.yaml에 선언된 modes`**를 유효한 모드로 동적 검증합니다.
+   - 이를 통해 사용자는 `guard handoff send --to security --type review -m "보안 감사 요청"` 또는 `guard handoff send --to doc --type task`를 오류 없이 직관적으로 발행할 수 있습니다.
+2. **선언적 `Scope Lock` 처리**:
+   - `ShouldApplyScopeLock(item, mode)`는 `mode == ModeDev` 하드코딩 대신, 모드 메타데이터의 `scope_lock: true` 플래그를 확인하여 유연하게 동작합니다.
+
+---
+
+## 5. 정책 및 훅 설계 (`guard-policy.yaml` & `internal/core`)
+
+### 5.1 `guard-policy.yaml` 기본 정책 (스택 프리셋 공통)
 
 `REVIEW` 모드는 **모든 쓰기(`write`)를 차단**하고, 리포트 파일 저장이 필요한 경우에만 `exclude_patterns`로 특정 경로(`doc/review/**` 등)를 선택적으로 열어둡니다. 민감 파일(`.env`, `secrets`) 읽기 차단은 기존 공통 규칙(`mode: ""`)을 그대로 상속합니다.
 
@@ -102,7 +163,7 @@ flowchart LR
     message: "[POLICY VIOLATION] REVIEW 모드에서는 소스 및 테스트 코드를 수정할 수 없습니다. 리뷰 리포트 작성(doc/review/**)과 'guard handoff send --to dev --type fix' 위임만 허용됩니다."
 ```
 
-### 4.2 셸 명령어 평가 및 우회 방지 (`internal/core/command.go`)
+### 5.2 셸 명령어 평가 및 우회 방지 (`internal/core/command.go`)
 - **허용되는 읽기/검증 명령**:
   - `git diff`, `git show`, `git log`, `git status`
   - `make verify`, `make test`, `go test`, `golangci-lint`, `pytest`, `npm test` 등 읽기·검증 실행 명령
@@ -112,17 +173,17 @@ flowchart LR
   - 워킹 트리를 변경하는 파괴적 git 명령(`git checkout --`, `git reset`, `git apply`, `git commit` 등)은 `REVIEW` 모드에서 차단 대상으로 검토
   - `guard handoff approve` 자가 승인 차단은 기존과 동일하게 모든 모드에서 강제
 
-### 4.3 Handoff `Scope Lock` 처리 (`internal/hub/handoff/model.go`)
+### 5.3 Handoff `Scope Lock` 처리 (`internal/hub/handoff/model.go`)
 - `DEV` 모드에서는 핸드오프의 `Targets`가 **쓰기 허용 범위(Scope Lock)**로 바인딩됩니다.
 - `REVIEW` 모드는 읽기 전용이므로 `ShouldApplyScopeLock(item, "REVIEW")`는 **`false`**를 반환하며, `Targets`는 에이전트가 집중적으로 리뷰할 **리뷰 범위(Review Scope)** 메타데이터로 인박스 봉투에 전달됩니다.
 
 ---
 
-## 5. REVIEW 템플릿 설계 (`guard init` 자동 생성)
+## 6. REVIEW 템플릿 설계 (`guard init` 자동 생성)
 
 `guard init` 실행 시 `.agents/rules/guard-workflow.md`와 함께 **`.agents/rules/guard-review.md`**(또는 스킬 템플릿)를 자동 생성합니다. 사용자는 프로젝트의 정적 검증 커맨드와 도메인 규칙만 커스터마이징해 바로 사용할 수 있습니다.
 
-### 5.1 표준 리뷰 템플릿 구조 (`.agents/rules/guard-review.md` 초안)
+### 6.1 표준 리뷰 템플릿 구조 (`.agents/rules/guard-review.md` 초안)
 
 ```markdown
 ---
@@ -177,7 +238,7 @@ trigger: manual # 또는 REVIEW 세션에서 활성화되는 조건/스킬
 - **4. 명세 대조 체크리스트**: 요구사항 충족 여부
 ```
 
-### 5.2 `Makefile` 통합 타깃 권장 패턴
+### 6.2 `Makefile` 통합 타깃 권장 패턴
 각 프로젝트는 `Makefile`에 결정론적 검증을 한 번에 실행하는 타깃을 두어 `REVIEW` 세션의 1단계 입력을 표준화합니다.
 
 ```makefile
@@ -189,26 +250,28 @@ verify: test lint complexity
 
 ---
 
-## 6. 컴포넌트별 변경 범위 (Implementation Blueprint)
+## 7. 컴포넌트별 변경 범위 (Implementation Blueprint)
 
 | 계층 | 대상 파일 | 변경 내용 |
 | :--- | :--- | :--- |
-| **Core** | `internal/core/evaluator.go`<br>`internal/core/command.go` | `NormalizeMode`에 `"REVIEW"` 지원 추가.<br>`REVIEW` 모드에서 읽기 명령(`git diff`/`show`) 허용 및 쓰기/상태변경 명령 차단 검증. |
-| **Session** | `internal/hub/session/model.go` | `Session.Mode` 허용값에 `REVIEW` 추가 (`DEV`, `TEST`, `PLAN`, `REVIEW`, `ALL`). |
-| **Handoff** | `internal/hub/handoff/model.go` | `ModeReview = "review"` 상수 추가, `ValidAgentMode` 확장, `ShouldApplyScopeLock`에서 `REVIEW` 모드는 `false` 반환. |
+| **Core** | `internal/core/evaluator.go`<br>`internal/core/command.go` | `NormalizeMode`에 `"REVIEW"` 기본 상수 추가.<br>`REVIEW` 모드에서 읽기 명령(`git diff`/`show`) 허용 및 쓰기/상태변경 명령 차단 검증. |
+| **Session** | `internal/hub/session/model.go` | `Session.Mode`에 임의 모드 문자열 수용 및 기본 상수(`REVIEW`) 추가. |
+| **Handoff** | `internal/hub/handoff/model.go` | `ModeReview = "review"` 상수 추가.<br>`ValidAgentMode`를 고정 검사에서 **동적 모드 검증(기본 모드 + 정책 파일 선언 모드)**으로 확장.<br>`ShouldApplyScopeLock`을 `scope_lock` 메타데이터 기반으로 확장. |
+| **Policy** | `internal/hub/policy/policy.go` | `guard-policy.yaml`의 `modes:` 섹션 파싱 구조체(`ModeDefinition`) 추가. |
 | **Setup / Init** | `internal/hub/setup/templates.go`<br>`internal/hub/setup/initializer.go`<br>`internal/hub/setup/doctor.go` | 스택별 `guard-policy.yaml` 프리셋(`go`, `node`, `python`, `generic`)에 `guard-review-mode-write` 규칙 추가.<br>`guard-review.md` 템플릿 및 `EnsureReviewRule` 추가.<br>`guard-workflow.md`의 `--to` 대상 목록에 `review` 반영. |
-| **CLI / Launcher** | `cmd/guard/main.go`<br>`internal/adapters/launcher/banner.go` | `case "dev", "test", "plan", "review", "all":` 분기 추가로 `guard review agy` Zero-Config Takeoff 지원.<br>`REVIEW` 모드 전용 브리핑 배너 추가. |
-| **TUI** | `internal/adapters/tui/update.go`<br>`internal/adapters/tui/view.go`<br>`internal/adapters/tui/styles.go` | `guard top`에서 `R` 단축키로 선택 세션을 `REVIEW` 모드로 즉시 전환, 모드 배지 스타일 추가. |
-| **i18n** | `internal/i18n/locales/ko.json`<br>`internal/i18n/locales/en.json` | `REVIEW` 모드 배너, 도움말, TUI 단축키 안내 메시지 추가. |
+| **CLI / Launcher** | `cmd/guard/main.go`<br>`internal/adapters/launcher/banner.go` | `guard review agy` 전용 단축 런처 및 미등록 커스텀 모드 자동 감지(`guard <mode> <cmd>`) 지원.<br>`REVIEW` 및 커스텀 모드 브리핑 배너 지원. |
+| **TUI** | `internal/adapters/tui/update.go`<br>`internal/adapters/tui/view.go`<br>`internal/adapters/tui/styles.go` | `guard top`에서 `R` 단축키로 선택 세션을 `REVIEW` 모드로 즉시 전환, 커스텀 모드 배지 스타일 지원. |
+| **i18n** | `internal/i18n/locales/ko.json`<br>`internal/i18n/locales/en.json` | `REVIEW` 및 커스텀 모드 안내, 도움말, TUI 단축키 메시지 추가. |
 
 ---
 
-## 7. 단계별 구현 계획 및 검증 체크리스트
+## 8. 단계별 구현 계획 및 검증 체크리스트
 
-### Phase 1: 코어 모드 & 런처 & 핸드오프 라우팅
+### Phase 1: 코어 모드 & 동적 모드 핸드오프 라우팅
 - [ ] `REVIEW` 모드 정규화 및 `guard review <cmd>` 런처 기동 지원
-- [ ] `guard handoff send --to review --type review` 라우팅 및 인박스 전달 동작 확인
-- [ ] `REVIEW` 모드에서 `ShouldApplyScopeLock == false` 보장
+- [ ] `guard-policy.yaml`의 `modes:` 메타데이터 파싱 지원
+- [ ] `ValidAgentMode`를 확장하여 기본 모드(`REVIEW` 포함) 및 커스텀 모드(`security`, `doc` 등) 핸드오프 라우팅 동작 확인
+- [ ] `REVIEW` 모드에서 `ShouldApplyScopeLock == false` 보장 및 커스텀 모드 `scope_lock` 연동
 
 ### Phase 2: `guard init` 템플릿 & TUI & i18n 통합
 - [ ] `templates.go` 4개 프리셋(`go`/`node`/`python`/`generic`)에 `guard-review-mode-write` 룰 반영
@@ -219,4 +282,5 @@ verify: test lint complexity
 - [ ] **쓰기 차단 테스트**: `REVIEW` 모드에서 프로덕션/테스트 파일 수정 및 `>` / `sed -i` 우회 쓰기 차단 확인
 - [ ] **읽기·diff 허용 테스트**: `REVIEW` 모드에서 프로덕션 파일 읽기, `git diff`, `make test` 정상 허용 및 `.env` 읽기 차단 유지 확인
 - [ ] **리포트 경로 예외 테스트**: `doc/review/**` 경로 쓰기만 허용되는지 확인
+- [ ] **커스텀 모드 동작 테스트**: 사용자 정의 모드(`SECURITY`, `DOC`) 정의 후 런처 기동 및 핸드오프 왕복 정상 동작 확인
 - [ ] **핸드오프 왕복 테스트**: `DEV` → `REVIEW` (`--type review`) → `DEV` (`--type fix --parent`) 전체 흐름 E2E 검증

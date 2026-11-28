@@ -64,12 +64,46 @@ func renderHandoffSummaryModal(m Model) string {
 		headerMetaStyle.Render("(#"+item.ID+")"),
 	)
 
+	boxWidth := m.width - 4
+	if boxWidth < 56 {
+		boxWidth = 56
+	}
+	if boxWidth > 96 {
+		boxWidth = 96
+	}
+	innerWidth := boxWidth - 6
+
 	var bodyLines []string
 	bodyLines = append(bodyLines, header, "")
-	bodyLines = append(bodyLines, fmt.Sprintf("• %s: %s",
-		tableHeaderStyle.Render(i18n.T("tui.handoff.field.summary")),
-		item.Summary,
-	))
+
+	summaryLines := wrapLines(item.Summary, innerWidth-12, "    ")
+	if len(summaryLines) > 0 {
+		bodyLines = append(bodyLines, fmt.Sprintf("• %s: %s",
+			tableHeaderStyle.Render(i18n.T("tui.handoff.field.summary")),
+			summaryLines[0],
+		))
+		for _, extra := range summaryLines[1:] {
+			bodyLines = append(bodyLines, extra)
+		}
+	}
+
+	if payload := strings.TrimSpace(item.Payload); payload != "" {
+		bodyLines = append(bodyLines, fmt.Sprintf("• %s:",
+			tableHeaderStyle.Render(i18n.T("tui.handoff.field.payload")),
+		))
+		wrapped := wrapLines(payload, innerWidth-4, "    ")
+		const maxPayloadLines = 12
+		if len(wrapped) > maxPayloadLines {
+			for _, ln := range wrapped[:maxPayloadLines] {
+				bodyLines = append(bodyLines, "    "+ln)
+			}
+			bodyLines = append(bodyLines, headerMetaStyle.Render(fmt.Sprintf("    ... (+%d lines)", len(wrapped)-maxPayloadLines)))
+		} else {
+			for _, ln := range wrapped {
+				bodyLines = append(bodyLines, "    "+ln)
+			}
+		}
+	}
 
 	if len(item.References) > 0 {
 		bodyLines = append(bodyLines, fmt.Sprintf("• %s: %s",
@@ -99,26 +133,62 @@ func renderHandoffSummaryModal(m Model) string {
 
 	footer := footerKeyStyle.Render("[Enter]") + footerDescStyle.Render(i18n.T("tui.handoff.key.approve")) +
 		footerKeyStyle.Render("[V]") + footerDescStyle.Render(i18n.T("tui.handoff.key.view_ref")) +
-		footerKeyStyle.Render("[Esc]") + footerDescStyle.Render(i18n.T("tui.handoff.key.reject"))
+		footerKeyStyle.Render("[X/C]") + footerDescStyle.Render(i18n.T("tui.handoff.key.reject")) +
+		footerKeyStyle.Render("[Esc]") + footerDescStyle.Render(i18n.T("tui.handoff.key.dismiss"))
 
 	bodyLines = append(bodyLines, "", footer)
-
-	boxWidth := m.width - 4
-	if boxWidth < 56 {
-		boxWidth = 56
-	}
-	if boxWidth > 96 {
-		boxWidth = 96
-	}
 
 	return handoffModalBorderStyle.Width(boxWidth).Render(strings.Join(bodyLines, "\n"))
 }
 
+func wrapLines(text string, maxLen int, contIndent string) []string {
+	if maxLen < 20 {
+		maxLen = 20
+	}
+	rawLines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	var out []string
+	for lineIdx, raw := range rawLines {
+		runes := []rune(raw)
+		if len(runes) == 0 {
+			if lineIdx > 0 {
+				out = append(out, "")
+			}
+			continue
+		}
+		firstChunk := true
+		for len(runes) > maxLen {
+			prefix := ""
+			if !firstChunk || lineIdx > 0 {
+				prefix = contIndent
+			}
+			out = append(out, prefix+string(runes[:maxLen]))
+			runes = runes[maxLen:]
+			firstChunk = false
+		}
+		prefix := ""
+		if !firstChunk {
+			prefix = contIndent
+		}
+		out = append(out, prefix+string(runes))
+	}
+	return out
+}
+
 func renderHandoffRefViewer(m Model) string {
 	scrollPct := fmt.Sprintf("%3.0f%%", m.viewport.ScrollPercent()*100)
-	header := panelTitleStyle.Render("📄 "+m.refViewerTitle) + "  " +
+	refBadge := ""
+	hasMultiRefs := m.activeHandoff != nil && len(m.activeHandoff.References) > 1
+	if hasMultiRefs {
+		refBadge = fmt.Sprintf("[%d/%d] ", m.refIndex+1, len(m.activeHandoff.References))
+	}
+	header := panelTitleStyle.Render("📄 "+refBadge+m.refViewerTitle) + "  " +
 		headerMetaStyle.Render(i18n.T("tui.modal.scroll", scrollPct))
+	switchHint := ""
+	if hasMultiRefs {
+		switchHint = footerKeyStyle.Render("[Tab / ←/→]") + footerDescStyle.Render(i18n.T("tui.handoff.key.switch_ref"))
+	}
 	footer := footerKeyStyle.Render("[↑/↓, j/k, PgUp/PgDn]") + footerDescStyle.Render(i18n.T("tui.modal.footer_scroll")) +
+		switchHint +
 		footerKeyStyle.Render("[Esc / V]") + footerDescStyle.Render(i18n.T("tui.handoff.key.back")) +
 		footerKeyStyle.Render("[Q]") + footerDescStyle.Render(i18n.T("tui.modal.footer_quit"))
 

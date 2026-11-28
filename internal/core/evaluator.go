@@ -30,6 +30,49 @@ func IsBypassMode(mode string) bool {
 	return m == ModeAll || m == ModeQA
 }
 
+// ExtractModes returns the unique, normalized mode names defined in policy rules
+// plus the built-in bypass mode (ALL), preserving first-seen order.
+func ExtractModes(policy *Policy) []string {
+	var modes []string
+	seen := make(map[string]bool)
+	add := func(m string) {
+		norm := NormalizeMode(m)
+		if norm == "" || seen[norm] {
+			return
+		}
+		seen[norm] = true
+		modes = append(modes, norm)
+	}
+
+	if policy != nil {
+		for _, r := range policy.Rules {
+			add(r.Mode)
+		}
+	}
+	add(ModeAll)
+	return modes
+}
+
+// HasMode reports whether mode is defined in policy rules or is a bypass mode (ALL/QA).
+func HasMode(policy *Policy, mode string) bool {
+	m := NormalizeMode(mode)
+	if m == "" {
+		return false
+	}
+	if IsBypassMode(m) {
+		return true
+	}
+	if policy == nil {
+		return false
+	}
+	for _, r := range policy.Rules {
+		if NormalizeMode(r.Mode) == m {
+			return true
+		}
+	}
+	return false
+}
+
 // Rule defines a single guardrail policy rule.
 type Rule struct {
 	Name            string   `yaml:"name"`

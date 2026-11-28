@@ -91,7 +91,7 @@ func ValidStatus(s HandoffStatus) bool {
 	}
 }
 
-// ValidAgentMode reports whether m is a supported agent session mode.
+// ValidAgentMode reports whether m is a built-in supported agent session mode.
 func ValidAgentMode(m string) bool {
 	switch strings.ToLower(strings.TrimSpace(m)) {
 	case ModePlan, ModeDev, ModeTest, ModeAll:
@@ -99,6 +99,23 @@ func ValidAgentMode(m string) bool {
 	default:
 		return false
 	}
+}
+
+// IsKnownMode reports whether m matches a built-in agent mode or any mode in knownModes.
+func IsKnownMode(m string, knownModes []string) bool {
+	if ValidAgentMode(m) {
+		return true
+	}
+	trimmed := strings.TrimSpace(m)
+	if trimmed == "" {
+		return false
+	}
+	for _, km := range knownModes {
+		if strings.EqualFold(strings.TrimSpace(km), trimmed) {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidSafeID reports whether id is a safe identifier without path traversal characters.
@@ -111,13 +128,18 @@ func ValidSafeID(id string) bool {
 
 // ParseTarget parses a CLI target string ("plan", "dev", "test", "all", or "<sessionId>").
 func ParseTarget(raw string) (HandoffNode, error) {
+	return ParseTargetWithModes(raw, nil)
+}
+
+// ParseTargetWithModes parses a CLI target string using built-in modes plus knownModes.
+func ParseTargetWithModes(raw string, knownModes []string) (HandoffNode, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return HandoffNode{}, fmt.Errorf("%w: target is required", ErrInvalidItem)
 	}
 
 	lower := strings.ToLower(trimmed)
-	if ValidAgentMode(lower) {
+	if IsKnownMode(lower, knownModes) {
 		return HandoffNode{
 			Mode: lower,
 		}, nil
@@ -133,11 +155,17 @@ func ParseTarget(raw string) (HandoffNode, error) {
 
 // ValidateAsTarget checks that the node represents a valid routing destination.
 func (n HandoffNode) ValidateAsTarget() error {
+	return n.ValidateAsTargetWithModes(nil)
+}
+
+// ValidateAsTargetWithModes checks that the node represents a valid routing destination
+// against built-in modes and knownModes.
+func (n HandoffNode) ValidateAsTargetWithModes(knownModes []string) error {
 	mode := strings.ToLower(strings.TrimSpace(n.Mode))
 	if mode == "" && n.SessionID == "" {
 		return fmt.Errorf("%w: target must specify mode or session_id", ErrInvalidItem)
 	}
-	if mode != "" && !ValidAgentMode(mode) {
+	if mode != "" && !IsKnownMode(mode, knownModes) {
 		return fmt.Errorf("%w: unsupported target mode %q", ErrInvalidItem, n.Mode)
 	}
 	if n.SessionID != "" && !ValidSafeID(n.SessionID) {
@@ -148,8 +176,14 @@ func (n HandoffNode) ValidateAsTarget() error {
 
 // ValidateAsSender checks that the sender node fields, if present, are well-formed.
 func (n HandoffNode) ValidateAsSender() error {
+	return n.ValidateAsSenderWithModes(nil)
+}
+
+// ValidateAsSenderWithModes checks that the sender node fields, if present, are well-formed
+// against built-in modes and knownModes.
+func (n HandoffNode) ValidateAsSenderWithModes(knownModes []string) error {
 	mode := strings.ToLower(strings.TrimSpace(n.Mode))
-	if mode != "" && !ValidAgentMode(mode) {
+	if mode != "" && !IsKnownMode(mode, knownModes) {
 		return fmt.Errorf("%w: unsupported sender mode %q", ErrInvalidItem, n.Mode)
 	}
 	if n.SessionID != "" && !ValidSafeID(n.SessionID) {
@@ -160,6 +194,11 @@ func (n HandoffNode) ValidateAsSender() error {
 
 // Validate verifies all invariants of a HandoffItem before persistence.
 func (item HandoffItem) Validate() error {
+	return item.ValidateWithModes(nil)
+}
+
+// ValidateWithModes verifies all invariants of a HandoffItem, allowing modes in knownModes.
+func (item HandoffItem) ValidateWithModes(knownModes []string) error {
 	if item.ID != "" && !ValidSafeID(item.ID) {
 		return fmt.Errorf("%w: invalid id %q", ErrInvalidItem, item.ID)
 	}
@@ -172,10 +211,10 @@ func (item HandoffItem) Validate() error {
 	if !ValidStatus(item.Status) {
 		return fmt.Errorf("%w: unsupported status %q", ErrInvalidItem, item.Status)
 	}
-	if err := item.From.ValidateAsSender(); err != nil {
+	if err := item.From.ValidateAsSenderWithModes(knownModes); err != nil {
 		return err
 	}
-	if err := item.To.ValidateAsTarget(); err != nil {
+	if err := item.To.ValidateAsTargetWithModes(knownModes); err != nil {
 		return err
 	}
 

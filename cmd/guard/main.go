@@ -66,13 +66,7 @@ func (a *cliApp) run(args []string) int {
 		return a.runHandoff(args[1:])
 
 	case "dev", "test", "plan", "all":
-		mode := core.NormalizeMode(cmd)
-		if len(args) > 1 {
-			// Zero-Config Launcher: guard <mode> <cmd...>
-			l := launcher.New(a.sessMgr, a.stdout, a.stderr)
-			return l.Run(mode, a.workspaceRoot, args[1:])
-		}
-		return a.switchMode(mode)
+		return a.runModeCommand(core.NormalizeMode(cmd), args[1:])
 
 	case "run":
 		if len(args) < 3 {
@@ -123,6 +117,11 @@ func (a *cliApp) run(args []string) int {
 		return 0
 
 	default:
+		// Check if cmd matches a custom mode defined in guard-policy.yaml.
+		polRes := policy.LoadDetailed(a.workspaceRoot)
+		if core.HasMode(polRes.Policy, cmd) {
+			return a.runModeCommand(core.NormalizeMode(cmd), args[1:])
+		}
 		// If the first argument is an executable command (e.g. `guard agy`, `guard bash`),
 		// launch it directly using the current workspace default mode.
 		if _, err := exec.LookPath(args[0]); err == nil {
@@ -134,6 +133,15 @@ func (a *cliApp) run(args []string) int {
 		a.printHelp()
 		return 1
 	}
+}
+
+func (a *cliApp) runModeCommand(mode string, rest []string) int {
+	if len(rest) > 0 {
+		// Zero-Config Launcher: guard <mode> <cmd...>
+		l := launcher.New(a.sessMgr, a.stdout, a.stderr)
+		return l.Run(mode, a.workspaceRoot, rest)
+	}
+	return a.switchMode(mode)
 }
 
 func (a *cliApp) runHook() int {
@@ -175,6 +183,8 @@ func (a *cliApp) switchMode(mode string) int {
 		fmt.Fprintln(a.stdout, i18n.T("cli.switch.desc.plan"))
 	case core.ModeAll:
 		fmt.Fprintln(a.stdout, i18n.T("cli.switch.desc.all"))
+	default:
+		fmt.Fprintf(a.stdout, "Custom policy mode: %s\n", mode)
 	}
 	return 0
 }
